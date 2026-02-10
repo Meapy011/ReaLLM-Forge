@@ -13,6 +13,14 @@ sudo cp -a */include/* /usr/local/cuda/include/
 sudo cp -a */lib/* /usr/local/cuda/lib64/
 sudo ldconfig
 
+##Install cuDSS
+
+wget https://developer.download.nvidia.com/compute/cudss/0.7.1/local_installers/cudss-local-tegra-repo-ubuntu2204-0.7.1_0.7.1-1_arm64.deb
+sudo dpkg -i cudss-local-tegra-repo-ubuntu2204-0.7.1_0.7.1-1_arm64.deb
+sudo cp /var/cudss-local-tegra-repo-ubuntu2204-0.7.1/cudss-*-keyring.gpg /usr/share/keyrings/
+sudo apt-get update
+sudo apt-get -y install cudss
+
 ## Installing Pytorch from Jetson AI Lab Community PyPI Mirror
 ## Ref link https://pypi.jetson-ai-lab.io/
 
@@ -24,6 +32,10 @@ pip3 install "https://pypi.jetson-ai-lab.io/jp6/cu126/+f/d12/bede7113e6b00/torch
 
 ##Torch Vision
 pip3 install "https://pypi.jetson-ai-lab.io/jp6/cu126/+f/d5b/caaf709f11750/torchvision-0.24.1-cp310-cp310-linux_aarch64.whl#sha256=d5bcaaf709f11750b5bb0f6ec30f37605da2f3d5cb3cd2b0fe5fac2850e08642"
+
+##Clean up
+rm -r libcusparse_lt-linux-aarch64-0.7.1.0-archive.tar.xz libcusparse_lt-linux-aarch64-0.7.1.0-archive cudss-local-tegra-repo-ubuntu2204-0.7.1_0.7.1-1_arm64.deb
+
 
 
 ##Verify Installs
