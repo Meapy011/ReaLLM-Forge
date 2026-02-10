@@ -3,7 +3,7 @@
 sudo apt update
 sudo apt install python3.10-venv -y
 cd ..
-python3 -m venv ReaLLM
+python3 -m venv venv
 source venv/bin/activate
 sudo apt install python-pip -y
 pip install sentencepiece tiktoken tqdm rich torchinfo plotly seaborn tensorboard pyyaml
