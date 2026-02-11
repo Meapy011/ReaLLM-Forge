@@ -13,8 +13,7 @@ Install neovim, might be broken so will need to double check can be skipped for 
 This will pull the dataset for generating Shakespeare
 
  `$python3 optimization_and_search/orin_run_experiments.py -c explorations/orin_inf.yaml`  
-Running Shakespeare prediction model time! If everything set up correctly this should run the model at 200 tokens  
-with 2 layer depth
+Running Shakespeare prediction model time! If everything set up correctly this should run the model at 200 tokens with 2 layer depth
 
 
 
