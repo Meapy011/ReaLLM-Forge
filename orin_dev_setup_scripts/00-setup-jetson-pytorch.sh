@@ -35,8 +35,6 @@ pip3 install "https://pypi.jetson-ai-lab.io/jp6/cu126/+f/d5b/caaf709f11750/torch
 ##Clean up
 rm -r libcusparse_lt-linux-aarch64-0.7.1.0-archive.tar.xz libcusparse_lt-linux-aarch64-0.7.1.0-archive cudss-local-tegra-repo-ubuntu2204-0.7.1_0.7.1-1_arm64.deb
 
-
-
 ##Verify Installs
 python3 - <<EOF
 import torch, torchvision
