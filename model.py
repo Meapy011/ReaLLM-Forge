@@ -379,8 +379,11 @@ class GPT(nn.Module):
                 if self.uses_numerical_multicontext:
                     module = self.numerical_embeddings[str(i)]
                     param = next(module.parameters())
-                    numeric_tokens = tokens.to(param.dtype).unsqueeze(-1)
-                    token_repr = module(numeric_tokens)
+                    if self.config.numerical_multicontext_input_format == "fp16_bits":
+                        numeric_tokens = self._fp16bits_to_fp32(tokens).to(param.dtype)
+                    else:
+                        numeric_tokens = tokens.to(param.dtype)
+                    token_repr = module(numeric_tokens.unsqueeze(-1))
                 else:
                     token_repr = self.transformer[f'wte_{i}'](tokens)
 
@@ -445,7 +448,11 @@ class GPT(nn.Module):
                 if target_list is not None:
                     losses = []
                     for i, preds in enumerate(logits):
-                        targets = target_list[i].to(preds.dtype)
+                        if self.config.numerical_multicontext_input_format == "fp16_bits":
+                            decoded_targets = self._fp16bits_to_fp32(target_list[i])
+                            targets = decoded_targets.to(preds.dtype)
+                        else:
+                            targets = target_list[i].to(preds.dtype)
                         mask = target_list[i] != -1
                         if mask.any():
                             loss_i = F.huber_loss(

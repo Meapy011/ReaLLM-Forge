@@ -279,6 +279,15 @@ def parse_args():
                                     help="Variant for numerical multicontext output mapping (e.g., mlp, linear)")
     model_group.add_argument('--numerical_mapping_weight_tying', default=True, action=argparse.BooleanOptionalAction,
                                     help="Tie numerical embedding/output mapping weights when supported")
+    model_group.add_argument(
+        '--numerical_multicontext_input_format',
+        default='scalar',
+        choices=['scalar', 'fp16_bits'],
+        help=(
+            "How to interpret raw uint16 values for numerical multicontext inputs/targets. "
+            "'scalar' uses the integer value directly, 'fp16_bits' decodes IEEE-754 half bits to float32."
+        ),
+    )
     model_group.add_argument('--multicontext', default=False, action=argparse.BooleanOptionalAction,
                                     help="Enable multi-context training on multiple simultaneous datasets")
     model_group.add_argument('--multidataset_wte', default=False, action=argparse.BooleanOptionalAction,

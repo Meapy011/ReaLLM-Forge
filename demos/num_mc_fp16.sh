@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# FP16-bits numerical multicontext demo:
+# 1) generate sinewave contexts with varying phase/amplitude encoded in uint16 fp16 bit patterns
+# 2) train numerical multicontext with model-side fp16 bit decoding
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+python3 data/sinewave/create_fp16_multicontext_dataset.py \
+  --output_root sinewave_fp16 \
+  --contexts 8 \
+  --samples 240000 \
+  --train_ratio 0.9 \
+  --base_period 1.0 \
+  --period_step 0.125 \
+  --base_phase 0.0 \
+  --phase_step 0.3926990817 \
+  --base_amplitude 0.5 \
+  --amplitude_step 0.1 \
+  --dc_offset 0.0
+
+python3 train.py \
+  --training_mode multicontext \
+  --dataset sinewave_fp16/s1 \
+  --multicontext \
+  --multicontext_datasets \
+    sinewave_fp16/s1 \
+    sinewave_fp16/s2 \
+    sinewave_fp16/s3 \
+    sinewave_fp16/s4 \
+    sinewave_fp16/s5 \
+    sinewave_fp16/s6 \
+    sinewave_fp16/s7 \
+    sinewave_fp16/s8 \
+  --numerical_multicontext \
+  --numerical_multicontext_input_format fp16_bits \
+  --numerical_embedding_variant mlp \
+  --numerical_output_variant mlp \
+  --numerical_mlp_hidden_dims 128 128 \
+  --n_layer 8 \
+  --n_head 8 \
+  --n_embd 256 \
+  --block_size 256 \
+  --batch_size 32 \
+  --max_iters 3000 \
+  --eval_interval 300 \
+  --eval_iters 100 \
+  --learning_rate 3e-4 \
+  --dtype bfloat16 \
+  --compile \
+  --out_dir out/numerical_mc_fp16_sine
