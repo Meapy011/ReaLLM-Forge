@@ -7,6 +7,7 @@ import torch.nn.functional as F
 
 from gpt_conf import GPTConfig
 from model import GPT
+from variations.numerical_mapping_variations import get_numerical_embedding
 
 
 class CaptureEmbedding(nn.Module):
@@ -41,6 +42,27 @@ class NumericalMulticontextFP16Test(unittest.TestCase):
         self.assertTrue(torch.allclose(decoded[finite_mask], expected_t[finite_mask], atol=1e-7, rtol=0.0))
         self.assertTrue(torch.equal(torch.isinf(decoded), torch.isinf(expected_t)))
         self.assertTrue(torch.equal(torch.isnan(decoded), torch.isnan(expected_t)))
+
+    def test_numerical_embedding_channel_norm_hyperspherenorm(self):
+        cfg = GPTConfig(
+            block_size=4,
+            vocab_size=16,
+            n_layer=0,
+            n_head=1,
+            n_embd=6,
+            numerical_embedding_variant="linear",
+            norm_channel_variant="hyperspherenorm",
+            norm_channel_radius=2.5,
+            norm_channel_scale=1.0,
+            norm_channel_gain=False,
+            norm_channel_radius_learning=False,
+        )
+        embedding = get_numerical_embedding(cfg)
+
+        x = torch.randn(3, 4, 1)
+        out = embedding(x)
+        norms = out.norm(dim=-1)
+        self.assertTrue(torch.allclose(norms, torch.full_like(norms, 2.5), atol=1e-4, rtol=1e-4))
 
     def test_numerical_multicontext_fp16_decodes_inputs_and_targets(self):
         cfg = GPTConfig(

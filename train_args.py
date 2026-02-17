@@ -288,6 +288,17 @@ def parse_args():
             "'scalar' uses the integer value directly, 'fp16_bits' decodes IEEE-754 half bits to float32."
         ),
     )
+    model_group.add_argument(
+        '--norm_channel_variant',
+        type=str,
+        default=None,
+        choices=['krmsnorm', 'prmsnorm', 'rmsnorm', 'layernorm', 'hyperspherenorm', 'dact', 'identity'],
+        help="Optional post-mapping normalization applied to numerical embedding channels.",
+    )
+    model_group.add_argument('--norm_channel_radius', type=float, default=None)
+    model_group.add_argument('--norm_channel_scale', type=float, default=None)
+    model_group.add_argument('--norm_channel_gain', type=bool, default=None, action=argparse.BooleanOptionalAction)
+    model_group.add_argument('--norm_channel_radius_learning', type=bool, default=None, action=argparse.BooleanOptionalAction)
     model_group.add_argument('--multicontext', default=False, action=argparse.BooleanOptionalAction,
                                     help="Enable multi-context training on multiple simultaneous datasets")
     model_group.add_argument('--multidataset_wte', default=False, action=argparse.BooleanOptionalAction,
