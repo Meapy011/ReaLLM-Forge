@@ -39,6 +39,11 @@ python3 train.py \
   --numerical_embedding_variant mlp \
   --numerical_output_variant mlp \
   --numerical_mlp_hidden_dims 128 128 \
+  --norm_channel_variant hyperspherenorm \
+  --norm_channel_radius 1.0 \
+  --norm_channel_scale 1.0 \
+  --no-norm_channel_gain \
+  --no-norm_channel_radius_learning \
   --n_layer 8 \
   --n_head 8 \
   --n_embd 256 \
