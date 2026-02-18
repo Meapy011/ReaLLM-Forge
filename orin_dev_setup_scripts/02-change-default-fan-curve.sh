@@ -6,4 +6,4 @@ sudo pip3 install -U jetson-stats
 
 ## Jtop message
 Green='\033[0;32m'
-echo -e "${Green}After you can run '$jtop' for system stats"
+echo -e "${Green}After you can run 'jtop' for system stats"
