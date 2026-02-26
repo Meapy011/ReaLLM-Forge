@@ -6,9 +6,12 @@ Each context writes:
   data/<output_root>/<context>/val.bin   (uint16)
   data/<output_root>/<context>/meta.pkl
 
-The uint16 values are the raw IEEE-754 fp16 bit patterns for sine samples.
-Use `--numerical_multicontext_input_format fp16_bits` during training so
-model.py decodes them through GPT._fp16bits_to_fp32.
+The uint16 values are raw IEEE-754 fp16 bit patterns. Use
+`--numerical_multicontext_input_format fp16_bits` at train/inference time.
+
+Generation is aligned to the regular sinewave data generator:
+- x_i = (i * 2π) / points_per_period
+- y_i = dc_offset + amplitude * sin(x_i * period + phase)
 """
 
 from __future__ import annotations
@@ -21,25 +24,31 @@ from pathlib import Path
 import numpy as np
 
 
-def _make_wave(num_points: int, period_scale: float, phase: float, amplitude: float, offset: float) -> np.ndarray:
-    x = np.arange(num_points, dtype=np.float32)
-    radians = (2.0 * math.pi * period_scale * x / float(num_points)) + phase
-    values = offset + amplitude * np.sin(radians, dtype=np.float32)
+def _make_wave(
+    *,
+    period: float,
+    phase: float,
+    amplitude: float,
+    dc_offset: float,
+    points_per_period: int,
+    num_periods: int,
+) -> np.ndarray:
+    total_points = points_per_period * num_periods
+    idx = np.arange(total_points, dtype=np.float32)
+    radians = (idx * 2.0 * math.pi) / float(points_per_period)
+    values = dc_offset + amplitude * np.sin(radians * period + phase)
     return values.astype(np.float32)
 
 
 def _fp32_to_fp16_bits(values: np.ndarray) -> np.ndarray:
-    fp16 = values.astype(np.float16)
-    return fp16.view(np.uint16)
+    return values.astype(np.float16).view(np.uint16)
 
 
 def _write_context(output_root: Path, context_name: str, train_bits: np.ndarray, val_bits: np.ndarray, metadata: dict) -> None:
     context_dir = output_root / context_name
     context_dir.mkdir(parents=True, exist_ok=True)
-
     train_bits.astype(np.uint16).tofile(context_dir / "train.bin")
     val_bits.astype(np.uint16).tofile(context_dir / "val.bin")
-
     with (context_dir / "meta.pkl").open("wb") as f:
         pickle.dump(metadata, f)
 
@@ -48,29 +57,35 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate fp16-bit sinewave datasets for numerical multicontext training.")
     parser.add_argument("--output_root", default="sinewave_fp16", help="Output directory under data/.")
     parser.add_argument("--contexts", type=int, default=8, help="Number of contexts to generate.")
-    parser.add_argument("--samples", type=int, default=240_000, help="Total samples per context.")
     parser.add_argument("--train_ratio", type=float, default=0.9, help="Train split ratio.")
-    parser.add_argument("--base_period", type=float, default=1.0, help="Base period scale for context 0.")
-    parser.add_argument("--period_step", type=float, default=0.125, help="Incremental period scale per context.")
-    parser.add_argument("--base_phase", type=float, default=0.0, help="Base phase offset in radians for context 0.")
-    parser.add_argument("--phase_step", type=float, default=0.3926990817, help="Phase offset step (default pi/8).")
-    parser.add_argument("--base_amplitude", type=float, default=0.5, help="Base sine amplitude for context 0.")
-    parser.add_argument("--amplitude_step", type=float, default=0.1, help="Amplitude increment per context.")
-    parser.add_argument("--dc_offset", type=float, default=0.0, help="Optional dc offset added to all contexts.")
+
+    # Regular sinewave-like controls
+    parser.add_argument("--base_period", type=float, default=15.0, help="Base sine period multiplier for context 1.")
+    parser.add_argument("--period_step", type=float, default=1.0, help="Period increment per context.")
+    parser.add_argument("--points_per_period", type=int, default=15, help="Discrete points sampled per period.")
+    parser.add_argument("--num_periods", type=int, default=2000, help="Number of periods to generate.")
+
+    parser.add_argument("--base_phase", type=float, default=0.0, help="Base phase in radians for context 1.")
+    parser.add_argument("--phase_step", type=float, default=0.0, help="Phase increment per context (default 0 to match regular).")
+
+    parser.add_argument("--base_amplitude", type=float, default=50.0, help="Base amplitude for context 1.")
+    parser.add_argument("--amplitude_step", type=float, default=0.0, help="Amplitude increment per context (default 0 to match regular).")
+    parser.add_argument("--dc_offset", type=float, default=64.0, help="DC offset (regular sinewave uses 64).")
     args = parser.parse_args()
 
     if not (0.0 < args.train_ratio < 1.0):
         raise ValueError("--train_ratio must be in (0, 1)")
 
+    total_samples = args.points_per_period * args.num_periods
+    train_n = int(total_samples * args.train_ratio)
+    val_n = total_samples - train_n
+
     repo_root = Path(__file__).resolve().parents[2]
     output_root = repo_root / "data" / args.output_root
     output_root.mkdir(parents=True, exist_ok=True)
 
-    train_n = int(args.samples * args.train_ratio)
-    val_n = args.samples - train_n
-
     print(f"Writing {args.contexts} contexts into: {output_root}")
-    print(f"Samples/context: train={train_n}, val={val_n}")
+    print(f"Samples/context: total={total_samples}, train={train_n}, val={val_n}")
 
     for idx in range(args.contexts):
         period = args.base_period + idx * args.period_step
@@ -79,14 +94,14 @@ def main() -> None:
         context_name = f"s{idx + 1}"
 
         wave = _make_wave(
-            num_points=args.samples,
-            period_scale=period,
+            period=period,
             phase=phase,
             amplitude=amplitude,
-            offset=args.dc_offset,
+            dc_offset=args.dc_offset,
+            points_per_period=args.points_per_period,
+            num_periods=args.num_periods,
         )
         bits = _fp32_to_fp16_bits(wave)
-
         train_bits = bits[:train_n]
         val_bits = bits[train_n:]
 
@@ -95,18 +110,22 @@ def main() -> None:
             "encoding": "ieee754-fp16-bitpattern-in-uint16",
             "vocab_size": 65536,
             "numerical_multicontext_input_format": "fp16_bits",
-            "samples": args.samples,
+            "points_per_period": args.points_per_period,
+            "num_periods": args.num_periods,
+            "samples": total_samples,
             "train_ratio": args.train_ratio,
-            "period_scale": period,
+            "period": period,
             "phase_radians": phase,
             "amplitude": amplitude,
             "dc_offset": args.dc_offset,
+            "float_range_min": float(wave.min()),
+            "float_range_max": float(wave.max()),
         }
 
         _write_context(output_root, context_name, train_bits, val_bits, metadata)
         print(
             f"[{context_name}] period={period:.4f}, phase={phase:.4f}, amplitude={amplitude:.4f}, "
-            f"train[min,max]=({train_bits.min()}, {train_bits.max()})"
+            f"float[min,max]=({wave.min():.4f}, {wave.max():.4f})"
         )
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # FP16-bits numerical multicontext demo:
-# 1) generate sinewave contexts with varying phase/amplitude encoded in uint16 fp16 bit patterns
+# 1) generate sinewave contexts with regular sinewave-like phase/range and fp16-bit encoding
 # 2) train numerical multicontext with model-side fp16 bit decoding
 
 set -euo pipefail
@@ -11,15 +11,16 @@ cd "$REPO_ROOT"
 python3 data/sinewave/create_fp16_multicontext_dataset.py \
   --output_root sinewave_fp16 \
   --contexts 8 \
-  --samples 240000 \
   --train_ratio 0.9 \
-  --base_period 1.0 \
-  --period_step 0.125 \
+  --base_period 15 \
+  --period_step 1 \
   --base_phase 0.0 \
-  --phase_step 0.3926990817 \
-  --base_amplitude 0.5 \
-  --amplitude_step 0.1 \
-  --dc_offset 0.0
+  --phase_step 0.0 \
+  --base_amplitude 50 \
+  --amplitude_step 0.0 \
+  --points_per_period 15 \
+  --num_periods 2000 \
+  --dc_offset 64
 
 python3 train.py \
   --training_mode multicontext \
