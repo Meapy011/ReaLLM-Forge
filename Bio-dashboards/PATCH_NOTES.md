@@ -1,8 +1,7 @@
-# Water calculations with the local weather, and the Bluetooth 5 dongle confirmed
-- Hydro: "How Much Should I Drink?" suggests a daily goal from your weight, a reference intake, exercise and the day's weather, shows the working, and sets it with one click
-- Hydro: local weather from Open-Meteo (pick your town once): hot or humid days add 250 mL to 1 L; cold days leave the goal as it is
-- Hydro: "Update my goal every morning" sets each day's goal from the suggestion and that day's forecast, and sends it to the bottle
-- Hydro: the Today tile shows what's left (mL and bottles) and your pace through the reminder hours: on pace or how far behind, and about how much per hour to catch up
-- TP-Link UB500 Plus tested on a Jetson Orin Nano: works out of the box on JetPack 6 (kernel 5.15); the bottle streams on it with no ExchangeMTU cap
-- Radio diagram, Hydro TROUBLESHOOTING 12 and the READMEs updated from "expected" to "confirmed"
-- Debug panels show each radio's real maker and USB ID instead of "Linux Foundation 1d6b:0246" for every radio
+# V5.2: adapters tested on the Orin, the boot catch, and docs for every radio
+- Every Bluetooth adapter tried and why it did or didn't work: a table and two new diagrams in docs/ARCHITECTURE.md section 9
+- UB500 Plus proven with the bottle: 10/10 cold connects, heard 8x in 25 s at -60 dBm, chosen by Hydro-dash after a reboot
+- Found: the Orin won't power on with a UB500 Plus and an ASUS BT400 both attached; plug the ASUS dongles in after boot (TROUBLESHOOTING 14)
+- BCM20702 firmware patch for the ASUS BT400 (build 0000 -> 1467), with checksum and steps (TROUBLESHOOTING 15)
+- hydro_test.py suggests the right bottle name when the one given is almost right
+- How to vet any adapter with the bottle (TROUBLESHOOTING 13), and why a 12 V USB-C trigger is unreliable for the Orin

@@ -268,6 +268,20 @@ def test_is_bottle():
     assert hp.is_bottle("", [hp.SERVICE_REF]) and not hp.is_bottle("Polar H10 1234")
 
 
+
+def test_name_hint():
+    # hydro_test.py imports bleak; a stand-in is enough for the hint, which never touches Bluetooth
+    import sys
+    import types
+    sys.modules.setdefault("bleak", types.SimpleNamespace(BleakClient=None, BleakScanner=None))
+    import hydro_test as ht
+    # the typo from the UB500 test night: five zeros asked for, four advertised
+    hint = ht.name_hint("h2o000003095", {"h2o00003095", "", "Pixel 8"})
+    assert "h2o00003095" in hint and "did you mean" in hint
+    assert ht.name_hint("h2o00003095", {"Pixel 8", ""}) == ""
+    assert "h2o00003095" in ht.name_hint("my bottle", {"h2o00003095"})
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for f in fns:

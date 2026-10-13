@@ -44,6 +44,19 @@ CAPACITY_ML = 621          # only used to show sip volumes for the "percent" fra
 MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$")
 
 
+def name_hint(want, seen):
+    """When the name asked for wasn't seen: the bottle-like names that were (a typo is the usual cause)."""
+    import difflib
+    seen = {n for n in seen if n}
+    close = difflib.get_close_matches(want, seen, n=3, cutoff=0.75)
+    bottles = sorted(n for n in seen if n.lower().startswith("h2o") and n not in close)
+    names = close + bottles[:3]
+    if not names:
+        return ""
+    return ("\n   Seen instead: " + ", ".join(names) +
+            ("  <- did you mean this one?" if close else "") + "\n   (names must match exactly; copy it from the scan)")
+
+
 async def resolve(target, adapter=None, timeout=25.0):
     """An address, or a name like h2o00001234: wait for it to advertise and return the device
     right away. Bottles rotate their address every few minutes, so the name is the stable handle,
@@ -51,11 +64,16 @@ async def resolve(target, adapter=None, timeout=25.0):
     if MAC_RE.match(target):
         return target
     print(f"🔎 Waiting up to {timeout:.0f} s for '{target}' to advertise -- shake or tip the bottle now...")
-    want = target.lower()
-    dev = await BleakScanner.find_device_by_filter(
-        lambda d, adv: (d.name or adv.local_name or "").lower() == want, timeout=timeout, **bluez(adapter))
+    want, seen = target.lower(), set()
+
+    def match(d, adv):
+        name = d.name or adv.local_name or ""
+        seen.add(name)
+        return name.lower() == want
+    dev = await BleakScanner.find_device_by_filter(match, timeout=timeout, **bluez(adapter))
     if dev is None:
-        sys.exit(f"❌ '{target}' wasn't seen. Shake the bottle and keep it next to the computer; phone Bluetooth off.")
+        sys.exit(f"❌ '{target}' wasn't seen. Shake the bottle and keep it next to the computer; phone Bluetooth off."
+                 + name_hint(target, seen))
     print(f"   seen at {dev.address} -- connecting immediately")
     return dev
 
@@ -67,9 +85,10 @@ async def open_bottle(target, adapter=None, timeout=25.0):
     find -> stop scan -> connect fails with "device ... not found"."""
     by_mac = bool(MAC_RE.match(target))
     want = target.lower()
-    found, box = asyncio.Event(), {}
+    found, box, seen = asyncio.Event(), {}, set()
 
     def on_adv(d, adv):
+        seen.add(d.name or adv.local_name or "")
         name = (d.name or adv.local_name or "").lower()
         if not found.is_set() and ((by_mac and d.address.lower() == want) or (not by_mac and name == want)):
             box["dev"] = d
@@ -86,7 +105,8 @@ async def open_bottle(target, adapter=None, timeout=25.0):
             await scanner.stop()
             if last_error:
                 sys.exit(f"❌ Couldn't connect ({last_error}) and '{target}' stopped advertising. Shake the bottle and try again.")
-            sys.exit(f"❌ '{target}' wasn't seen. Shake the bottle and keep it next to the computer; phone Bluetooth off.")
+            sys.exit(f"❌ '{target}' wasn't seen. Shake the bottle and keep it next to the computer; phone Bluetooth off."
+                     + ("" if by_mac else name_hint(target, seen)))
         dev = box["dev"]
         print(f"   seen at {dev.address} -- connecting with the scan still running (try {attempt}/{CONNECT_TRIES}; up to {CONNECT_TIMEOUT_S:.0f} s)")
         # The bottle only answers a connection while it is advertising (short bursts after it's
@@ -367,12 +387,13 @@ async def watch(target, seconds=60, adapter=None):
     want = (target or "").lower()
     print(f"👀 Watching for {'HidrateSpark bottles' if not want else repr(target)} for {seconds} s, one mark per second "
           "(█ heard, · silent).\n   Leave the bottle still, then shake it once, then sip -- and note when you did.\n")
-    t0, marks, addrs, heard_at = time.time(), [], set(), []
+    t0, marks, addrs, heard_at, seen = time.time(), [], set(), [], set()
     while time.time() - t0 < seconds:
         hit = {}
 
         def on_adv(d, adv):
             name = d.name or adv.local_name or ""
+            seen.add(name)
             if (want and (name.lower() == want or d.address.lower() == want)) or (not want and hp.is_bottle(name, adv.service_uuids)):
                 hit["rssi"] = adv.rssi
                 addrs.add(d.address)
@@ -391,7 +412,8 @@ async def watch(target, seconds=60, adapter=None):
         await asyncio.sleep(max(0.0, 1.0 - (time.time() - tick)))
     print("\n")
     if not heard_at:
-        print("Never heard. The bottle did not advertise its name at all in that time."); return
+        print("Never heard. The bottle did not advertise its name at all in that time."
+              + (name_hint(target, seen) if want and not MAC_RE.match(target) else "")); return
     bursts, start, prev = [], heard_at[0], heard_at[0]
     for t in heard_at[1:]:
         if t - prev > 2.5:

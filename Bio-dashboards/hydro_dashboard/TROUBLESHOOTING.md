@@ -291,6 +291,91 @@ It worked out of the box on JetPack 6 (kernel 5.15): the kernel loads `rtl_bt/rt
 itself and no `btusb new_id` is needed (it shares the plain UB500's USB ID, `2357:0604`). Check
 yours with `hciconfig -a`: the dongle should show `Bus: USB`, `UP RUNNING` and `HCI Version: 5.x`.
 
+---
+
+### 13. Proving a radio works with the bottle (the UB500 Plus test night)
+
+How the UB500 Plus was confirmed on the Orin, so the same checks can vet any new adapter. First
+**stop Hydro-dash**: a connected bottle stops advertising, and every test below then reports
+"wasn't seen".
+
+```bash
+systemctl --user stop biodash-hydro
+hcitool con                                   # must list no connection to the bottle
+# the UB500's hciN, found by its USB ID (2357:0604) since the number changes between boots
+UB=$(for h in /sys/class/bluetooth/hci*; do [ "$(cat $h/device/../idVendor 2>/dev/null)" = 2357 ] && basename $h; done | head -1); echo $UB
+```
+
+For another adapter, use its USB vendor ID from `lsusb`, or read its hci number off the debug
+panel's Bluetooth Radio list, where each radio shows its address.
+
+Set `UB` in every new terminal: shell variables don't carry over, and an empty `--adapter` quietly
+uses the default radio.
+
+| Test | Command | Pass |
+|---|---|---|
+| Hears the bottle | `python3 hydro_test.py watch <name> --adapter $UB --seconds 45` (tip the bottle) | █ bursts after each tip (8 sightings in 25 s at −60 dBm on the UB500) |
+| Ten cold connects (the section 12 bug) | `for i in $(seq 10); do python3 hydro_test.py dump <name> --adapter $UB 2>&1 \| grep -c "✅"; sleep 5; done` | **6** every time: "✅ Connected" plus the 5 protocol characteristics. The old bug gives 0 or 1 |
+| Which radio the dashboard uses | `hcitool -i $UB con` while Hydro-dash is connected | lists the bottle |
+
+**Wrong name, all zeros.** The tools match the bottle's name exactly: `h2o00003095` is not
+`h2o000003095`. A run that never connects prints no ✅ at all, so a typo looks exactly like a dead
+radio. The tools now list the bottle-like names they did see ("Seen instead: h2o00003095 <- did you
+mean this one?"), and `tools/ble_scan.py` shows every name in range.
+
+### 14. The Orin won't power on with a UB500 Plus and an ASUS BT400 plugged in
+
+**Symptom:** nothing at all. No NVIDIA logo, no screen; the charger shows a few watts and stays
+there. Unplug a dongle and it boots.
+
+What was tried, one boot each:
+
+| Plugged in at power-on | Result |
+|---|---|
+| UB500 Plus + 2 × ASUS BT400 | ❌ no boot |
+| UB500 Plus + 1 × ASUS BT400 | ❌ no boot |
+| 2 × ASUS BT400 | ✅ boots |
+| UB500 Plus alone | ✅ boots |
+
+- **It isn't power.** Two ASUS dongles boot fine, and with everything running all four dongles add
+  about 1 W (7–8 W total) with no over-current messages in `dmesg`.
+- **It happens before Linux.** No log is written for the failed boot (`journalctl -b -1` shows the
+  boot before it) and the screen never lights, so it's the Jetson boot firmware's USB scan meeting
+  that pair of devices. L4T 36.5.2, the newest JetPack 6 release, still does it.
+- **Firmware files don't help.** The dongles' improved firmware (section 15, and `rtl8761bu_fw.bin`)
+  is uploaded by Linux into the chip's RAM at every power-up, so the boot firmware always meets the
+  original.
+
+**Workarounds:** boot with the ASUS dongles unplugged and plug them in afterwards (everything
+works once Linux is up, and the dashboards find their radios by address); or put them on a powered
+hub with a switch, turned on after boot; or use UB500 Pluses throughout (test two together at
+power-on first). Not yet tried: other USB ports, and a serial console on the button header (J14)
+to see exactly where the firmware stops.
+
+### 15. "BCM: firmware Patch file not found" (ASUS BT400 and other BCM20702 dongles)
+
+```text
+Bluetooth: hci2: BCM20702A1 (001.002.014) build 0000
+Bluetooth: hci2: BCM: firmware Patch file not found, tried:
+Bluetooth: hci2: BCM: 'brcm/BCM20702A1-0b05-17cb.hcd'
+```
+
+The dongle still works on the firmware built into the chip ("build 0000"), but that's the oldest,
+buggiest version. The patch is in the community
+[broadcom-bt-firmware](https://github.com/winterheart/broadcom-bt-firmware) collection, named after
+the dongle's USB ID (`0b05:17cb` for the ASUS BT400):
+
+```bash
+cd /tmp
+wget -q https://raw.githubusercontent.com/winterheart/broadcom-bt-firmware/master/brcm/BCM20702A1-0b05-17cb.hcd
+echo "02204ae0958e7af3ffa6193713f5b3847d4ad37b9b9b5064b56cd96f2fdd18d1  BCM20702A1-0b05-17cb.hcd" | sha256sum -c
+sudo mkdir -p /lib/firmware/brcm && sudo cp BCM20702A1-0b05-17cb.hcd /lib/firmware/brcm/
+```
+
+Unplug and replug the dongle (no reboot needed), then `sudo dmesg | grep -i "build 1467"`: one line
+per patched dongle. It loads by itself from then on. Another dongle ID needs the file with that ID
+in its name; the collection's `DEVICES.md` lists them.
+
 ## Checklist
 
 | Symptom | Check |
@@ -301,6 +386,9 @@ yours with `hciconfig -a`: the dongle should show `Bus: USB`, `UP RUNNING` and `
 | Connects, but no sips | Debug panel: *Sync after connecting* = complete, *Sip records via* found; *Undecoded sip frames* rising → new firmware layout, send `_raw.csv` |
 | Sips missing | Debug panel: *Skipped records* should be 0 |
 | Volumes look ~30 % off | Capacity setting vs. your bottle (21 oz 621 mL, 30 oz tumbler 887 mL) — in the HidrateSpark app *and* Hydro-dash |
+| "wasn't seen" every time, but the scan lists the bottle | Hydro-dash still connected (stop it; `hcitool con` must be empty), or the name differs by a character (section 13) |
+| Orin doesn't power on with dongles attached | Section 14: plug the ASUS dongles in after boot |
+| `BCM: firmware Patch file not found` | Section 15 |
 | Anything else | `python3 hydro_test.py listen h2o0000xxxx` prints every notification decoded and saves a capture |
 
 ## Tools that helped
@@ -312,3 +400,5 @@ yours with `hciconfig -a`: the dongle should show `Bus: USB`, `UP RUNNING` and `
 | `BLEAK_LOGGING=1 …` | the millisecond timing that showed BlueZ dropping the device |
 | `sudo btmon \| grep -B16 h2o \| grep -iE "PDU\|Address\|Name"` | the advertisement type (connectable or not) and address type |
 | Hydro-dash debug panel (D) | handshake, frames, skips, last error, every characteristic's last raw frame |
+| `hydro_test.py watch <name> --adapter hciN` | whether a given radio hears the bottle's adverts, second by second |
+| `tools/ble_scan.py --adapter hciN` | every device in range with its exact name and signal |

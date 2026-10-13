@@ -210,8 +210,11 @@ sensor, refills and battery, with hour and 7-day charts and day-scale tile trend
   (`ExchangeMTU = 64` under `[GATT]` in `/etc/bluetooth/main.conf`, then restart bluetooth; it
   applies to every device on the computer). A Bluetooth 5 dongle needs no cap (tested: TP-Link
   UB500 Plus, working out of the box on a Jetson Orin Nano). See the
-  [radio diagram](docs/ARCHITECTURE.md#7-hydro-dash-which-bluetooth-radio) and
-  `hydro_dashboard/TROUBLESHOOTING.md`.
+  [radio diagram](docs/ARCHITECTURE.md#7-hydro-dash-which-bluetooth-radio),
+  [every adapter tried and why it did or didn't work](docs/ARCHITECTURE.md#9-radios-on-the-orin-what-plugs-in-where)
+  and `hydro_dashboard/TROUBLESHOOTING.md`.
+- **Jetson Orin catch:** with a UB500 Plus *and* an ASUS USB-BT400 plugged in at power-on, the Orin
+  doesn't boot at all; plug the ASUS dongles in after it's up (TROUBLESHOOTING 14).
 - **Totals come from the sip log** (`_sips.csv`), so they survive restarts.
 - **Glow and reminders:** *Glow now* lights the bottle on demand. Choose a glow **style** (pulse,
   spin, flash, solid, rainbow) and **two colours**, previewed as the LED ring, and send it to the
@@ -396,7 +399,7 @@ A patch never moves you to a new version, and each action needs a second tap to 
 Each patch lists its **patch notes** under its title (from the release's `PATCH_NOTES.md`, which the push script writes into the commit), so you can see what it changes before applying it.
 
 - **Needs a git clone**, not an unzipped copy: `git clone https://github.com/Meapy011/Bio-dash`
-  and run the dashboards from the newest release folder (`Bio-dash/V5.0_Dashboard`).
+  and run the dashboards from the newest release folder (`Bio-dash/V5.2_Dashboard`).
 - **Only fast-forwards from the clone's own remote.** It refuses if tracked files were edited
   locally or the branch has diverged, and says which files; nothing of yours is overwritten.
 - **Recordings and settings are safe.** Recordings live in `Documents/Bio-dash`; saved settings

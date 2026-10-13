@@ -11,6 +11,7 @@ diagrams below; elsewhere, paste a block into <https://mermaid.live>.
 6. [Starting and running everything](#6-starting-and-running-everything)
 7. [Hydro-dash: which Bluetooth radio](#7-hydro-dash-which-bluetooth-radio) — the old-dongle catch
 8. [Analysis: from recordings to one clock](#8-analysis-from-recordings-to-one-clock) — the sixth dashboard
+9. [Radios on the Orin: what plugs in where](#9-radios-on-the-orin-what-plugs-in-where) — every adapter tried, and the boot catch
 
 **Colour key** (same in every diagram):
 
@@ -375,7 +376,7 @@ flowchart TB
     M -->|"capped: ExchangeMTU = 64<br/>in /etc/bluetooth/main.conf"| OK
     X -.->|add the cap,<br/>restart bluetooth| M
 
-    N --> N1["Hears the bottle and carries<br/>large replies whole, no cap needed<br/>(confirmed: TP-Link UB500 Plus)"]
+    N --> N1["Hears it, carries large replies whole,<br/>no cap needed. UB500 Plus on the Orin:<br/>10/10 cold connects, −60 dBm"]
     N1 --> OK
 
     OK(["Services read:<br/>sips, fill level and glow work"])
@@ -407,9 +408,12 @@ flowchart TB
   pieces, and this bottle doesn't send it at all. With small messages every reply fits.
 - **The bottle's address changes** from time to time. Each change makes the computer read the
   service list afresh, so this can appear on a setup that worked earlier the same day.
-- **Choosing the radio:** debug panel (D) → Bluetooth Radio. Hydro-dash defaults to the built-in
-  one, like the other dashboards.
-- Step by step, with the commands: `hydro_dashboard/TROUBLESHOOTING.md`, sections 11 and 12.
+- **Choosing the radio:** debug panel (D) → Bluetooth Radio. The choice is saved by the radio's
+  address, so it survives reboots (when hci numbers shuffle) and upgrades. Without a choice,
+  Hydro-dash prefers a built-in radio; on boards whose USB ports don't say which radios are built in
+  (the Orin Nano dev kit), that falls back to whichever radio is hci0.
+- Step by step, with the commands: `hydro_dashboard/TROUBLESHOOTING.md`, sections 11 to 15.
+- Every adapter tried so far, and why it did or didn't work: [section 9](#9-radios-on-the-orin-what-plugs-in-where).
 
 ---
 
@@ -463,3 +467,84 @@ flowchart LR
   Omni at night is one signal.
 - **Estimates are marked:** every value carries `n`, the number of real readings behind it;
   0 means interpolated, carried forward, or "no sip in this step". Charts draw those dashed.
+
+---
+
+## 9. Radios on the Orin: what plugs in where
+
+Every Bluetooth device gets its own radio (one radio streaming a busy device, like the Polar's ECG,
+can starve the others). On the Jetson Orin Nano that's four radios for four devices:
+
+```mermaid
+flowchart LR
+    BOT(("HidrateSpark<br/>bottle")) --> UB["TP-Link UB500 Plus<br/>Bluetooth 5.1 · USB"]
+    POL(("Polar H10")) --> INT["Orin built-in<br/>Realtek · Bluetooth 5.1"]
+    O2(("Viatom O2 ring")) --> B1["ASUS USB-BT400 #1<br/>Broadcom · Bluetooth 4.0"]
+    ATM(("Atmos monitor")) --> B2["ASUS USB-BT400 #2<br/>Broadcom · Bluetooth 4.0"]
+    ATM -.->|"or Wi-Fi,<br/>freeing a radio"| WIFI["Wi-Fi (TCP)"]
+
+    UB --> HY["Hydro-dash"]
+    INT --> PO["Polar-dash / Omni"]
+    B1 --> VI["Viatom-dash / Omni"]
+    B2 --> AT["Atmos-dash"]
+    WIFI --> AT
+
+
+    classDef device fill:#FEF3C7,stroke:#D97706,color:#78350F,stroke-width:2px
+    classDef radio fill:#EDE9FE,stroke:#7C3AED,color:#4C1D95,stroke-width:2px
+    classDef app fill:#CCFBF1,stroke:#0D9488,color:#134E4A,stroke-width:2px
+    class BOT,POL,O2,ATM device
+    class UB,INT,B1,B2,WIFI radio
+    class HY,PO,VI,AT app
+```
+
+- **The bottle goes on the UB500 Plus.** It's the one device that needs a Bluetooth 5 radio
+  (section 7). The O2 ring and the Atmos send small, slow packets that a 4.0 dongle handles fine.
+- **The Polar gets a modern radio to itself** because its ECG is the busiest stream.
+- **Each dashboard pins its radio by address** in its debug panel (D) → Bluetooth Radio
+  (saved in `radio_config.json`, carried across upgrades). The hci numbers shuffle whenever
+  dongles are added or the Orin boots, and the address is what stays put.
+
+### The boot catch: what's plugged in at power-on
+
+```mermaid
+flowchart TB
+    P(["Power on"]) --> FW["Jetson boot firmware<br/>(before Linux, before the screen)<br/>scans every USB device"]
+    FW --> Q{"A UB500 Plus AND an<br/>ASUS BT400 attached?"}
+    Q -->|yes| HANG["Hangs: no NVIDIA logo, no screen,<br/>never reaches Linux<br/>(charger shows a few watts)"]
+    Q -->|"no: UB500 alone,<br/>or ASUS dongles alone"| LNX["Linux starts"]
+    HANG -.->|"fix: plug the ASUS dongles in<br/>after boot (or a switched hub)"| LNX
+    LNX --> FWL["Linux loads each dongle's firmware into its RAM<br/>UB500: rtl_bt/rtl8761bu_fw.bin<br/>ASUS: brcm/BCM20702A1-0b05-17cb.hcd → build 1467"]
+    FWL --> RUN(["Dashboards pin their radios by address"])
+
+    classDef radio fill:#EDE9FE,stroke:#7C3AED,color:#4C1D95,stroke-width:2px
+    classDef worker fill:#DBEAFE,stroke:#2563EB,color:#1E3A8A,stroke-width:2px
+    classDef decision fill:#FFEDD5,stroke:#EA580C,color:#7C2D12,stroke-width:2px
+    classDef warn fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D,stroke-width:2px
+    classDef start fill:#1E293B,stroke:#94A3B8,color:#F8FAFC,stroke-width:2px
+    class P,RUN start
+    class FW,LNX worker
+    class FWL radio
+    class Q decision
+    class HANG warn
+```
+
+- **Not power:** two ASUS dongles together boot fine, and all four dongles add about 1 W once
+  running (7–8 W total, no over-current messages). It's that particular pair at power-on.
+- **The dongles' firmware can't fix it.** Neither chip has flash for its firmware: they run what's
+  built into the chip, and Linux uploads the improved firmware into their RAM at every power-up,
+  after the boot firmware has already met them.
+- The Orin's boot firmware here was L4T 36.5.2, the newest of the JetPack 6 line (August 2026).
+
+### Every adapter tried, and why it did or didn't work
+
+| Adapter | Chip · USB ID | Bluetooth | Firmware | With the bottle | Notes |
+|---|---|---|---|---|---|
+| **TP-Link UB500 Plus** | Realtek RTL8761BU · `2357:0604` (same ID as the plain UB500) | reports 5.1 (box says 5.3) | `rtl_bt/rtl8761bu_fw.bin` + `_config.bin`, loaded by the kernel itself on JetPack 6 (kernel 5.15); no `btusb new_id` needed | ✅ **Works.** 10 of 10 cold connects with all 5 HidrateSpark characteristics; heard 8 times in 25 s at −60 dBm; Hydro-dash picked it by itself after a reboot; no `ExchangeMTU` cap | Antenna plugs in with an **MHF4** connector (the small one, not U.FL): use an MHF4-to-SMA pigtail to move it outside a case |
+| **ASUS USB-BT400** | Broadcom BCM20702A1 · `0b05:17cb` | 4.0 | built-in "build 0000"; Linux needs `brcm/BCM20702A1-0b05-17cb.hcd` to bring it to **build 1467** (TROUBLESHOOTING 15) | ⚠ **Hears it instantly, then "connected, no services"**: 4.0 sends 27 bytes per packet and the bottle never sends its first large reply. Works only with `ExchangeMTU = 64`, which affects every device | Fine for the O2 ring and Atmos (small packets). **Stops the Orin booting** if attached together with a UB500 Plus at power-on (above) |
+| **Orin Nano built-in** | Realtek 8822-series combo card, Realtek's own `rtk_btusb` driver | 5.1 | built in | not tried with the bottle this round | Its USB port doesn't say it's built in, so the debug panel shows no internal/external badge |
+| **Laptop built-in** (FW13) | combo card shared with Wi-Fi | 5.x | built in | ❌ **Often doesn't hear it**: the bottle only advertises for a few seconds after it moves, and the shared antenna misses those bursts | TROUBLESHOOTING 11 |
+
+**Powering the Orin:** a 12 V USB-C "trigger" board works only with chargers that offer 12 V,
+which USB Power Delivery doesn't require. Any charger over 45 W must offer 20 V, the Orin's normal
+input, so a 20 V trigger with a 65 W charger is the dependable choice.
