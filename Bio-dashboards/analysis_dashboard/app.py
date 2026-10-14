@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -17,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 import biodata as b
 import bt_debug
+import mcint
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(BASE_DIR)
@@ -181,6 +183,43 @@ def export(start: str, end: str = "", ids: str = "", step: str = "1min", minmax:
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+@app.get("/api/export_mcint.zip")
+def export_mcint(start: str, end: str = "", ids: str = "", step: str = "10s", max_gap: int = 60, hold: int = 120,
+                 missing: str = "mark", flags: int = 0):
+    """The selected signals as an integer CSV for ReaLLM-Forge's data/csv_mc_int, zipped with
+    its columns.json (scales, ranges) and prepare.sh (get_dataset.sh with every --range)."""
+    if missing not in ("mark", "drop"):
+        raise HTTPException(400, "missing must be mark or drop")
+    s, e, sd, ed = day_range(start, end)
+    sigs = signals_for(s, e)
+    chosen, _, st = _ids_and_step(sigs, ids, step, e - s + 1, 10_000_000)
+    if not chosen:
+        raise HTTPException(400, "Pick at least one signal.")
+    if (e - s) // st * len(chosen) > MAX_EXPORT_CELLS:
+        raise HTTPException(400, "That export would be too large; pick a larger step, fewer days or fewer signals.")
+    tab = b.table(dict(sorted(chosen.items())), s, e, step=st, max_gap=max_gap * 1000)
+    try:
+        res = mcint.build(tab, chosen, hold_ms=hold * 1000, missing=missing, real_flags=bool(flags))
+    except ValueError as ex:
+        raise HTTPException(400, str(ex))
+    if not res["rows"]:
+        raise HTTPException(400, "No rows: every row lacked at least one signal. Use 'mark' for missing readings, or fewer signals.")
+    step_txt = f"{st // 60000}min" if st % 60000 == 0 else f"{st / 1000:g}s"
+    name = f"bio-dash_{sd}" + (f"_to_{ed}" if ed != sd else "") + f"_{step_txt}_mcint"
+    csv_buf = io.StringIO()
+    mcint.write_csv(csv_buf, res)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(f"{name}/{name}.csv", csv_buf.getvalue())
+        z.writestr(f"{name}/{name}.columns.json", mcint.columns_json(res, source=sd if ed == sd else f"{sd} to {ed}"))
+        info = zipfile.ZipInfo(f"{name}/{name}.prepare.sh", date_time=time.localtime()[:6])
+        info.external_attr = 0o100755 << 16
+        info.compress_type = zipfile.ZIP_DEFLATED
+        z.writestr(info, mcint.prepare_sh(res, name + ".csv"))
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.zip"'})
+
+
 @app.get("/night/{night}")
 def night(night: str):
     try:
@@ -227,6 +266,23 @@ async def update(request: Request):
     except Exception:
         action = None
     code, out = await run_in_threadpool(bt_debug.system_update, action, request.client.host if request.client else "",
+                                        request.headers.get(bt_debug.POWER_HEADER))
+    return JSONResponse(out, status_code=code)
+
+
+@app.get("/api/system/restart")
+def restart_info(request: Request):
+    return bt_debug.restart_info(request.client.host if request.client else "")
+
+
+@app.post("/api/system/restart")
+async def restart_all(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    code, out = await run_in_threadpool(bt_debug.system_restart, body if isinstance(body, dict) else {},
+                                        request.client.host if request.client else "",
                                         request.headers.get(bt_debug.POWER_HEADER))
     return JSONResponse(out, status_code=code)
 

@@ -268,6 +268,14 @@
         a.style.opacity = ids.length ? '' : '.4';
         a.style.pointerEvents = ids.length ? '' : 'none';
         a.title = ids.length ? 'The selected signals, at the step shown, as one CSV' : 'Pick at least one signal';
+        const m = $('export-mcint');
+        if (m) {
+            const mstep = S.data ? `${S.data.step / 1000}s` : (S.step === 'auto' ? '10s' : S.step);
+            m.href = `/api/export_mcint.zip?${q()}&ids=${encodeURIComponent(ids.join(','))}&step=${encodeURIComponent(mstep)}`;
+            m.style.opacity = a.style.opacity;
+            m.style.pointerEvents = a.style.pointerEvents;
+            m.title = ids.length ? 'Whole numbers with a fixed range per column, for ReaLLM-Forge data/csv_mc_int' : 'Pick at least one signal';
+        }
     }
 
     let seriesSeq = 0;

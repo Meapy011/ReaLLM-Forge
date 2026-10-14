@@ -74,8 +74,10 @@ polar_dashboard/
     ├── js/ecg_view.js      # (Polar, Omni) 🩺 Monitor / 📈 Classic ECG toggle
     ├── js/tile_trends.js   # tap-a-tile trend graphs (all dashboards; shared module)
     ├── js/debug_panel.js   # 🐞 debug panel (Polar, Viatom, Atmos)
-    ├── js/sidebar.js       # sidebar: dashboard links, debug, keep-awake, updates, power (all dashboards)
+    ├── js/sidebar.js       # sidebar: dashboard links, debug, keep-awake, theme, updates, power (all dashboards)
+    ├── js/themes.js        # picks the theme (cookie shared by every port) and recolours chart axes (all dashboards)
     ├── css/tailwind.css    # compiled Tailwind (all dashboards)
+    ├── css/themes.css      # the themes: Light, OLED black, High contrast, Warm night (all dashboards)
     └── vendor/             # Chart.js, Luxon, adapter, streaming plugin
 ```
 
@@ -379,11 +381,32 @@ Everything that used to sit in the top bar lives in a sidebar, the same in every
 
 - **Dashboards:** links to the others that are running, in port order. A dashboard that isn't running isn't listed.
 - **View:** the 🐞 debug panel (still **D**) and **☀ Keep screen on**.
+- **Theme:** see below.
 - **Updates** and **Power:** see the next two sections.
 
 It's closed when a page opens: **☰** in the header opens it (beside the page on wide screens,
 as a slide-over drawer on phones and narrow windows) and **«** hides it again. The header keeps only the
 dashboard's title and its connection status.
+
+### Themes (sidebar)
+
+![Hydro-dash in the five themes](docs/themes.png)
+
+Pick one under **Theme** in the sidebar; it applies to every dashboard at once (it's saved in a
+cookie, which all the dashboard ports on a computer share), and dashboards already open follow
+within a couple of seconds.
+
+| Theme | For |
+|---|---|
+| **Auto** (default) | Light or Dark, following the phone's or computer's own setting, and switching when it does |
+| **Dark** | the original slate look |
+| **Light** | bright rooms and daytime; the ECG monitor turns into red-gridded ECG paper |
+| **OLED black** | true black: OLED screens switch those pixels off, so it's easier on the battery and the eyes at night |
+| **High contrast** | bold borders, brighter text and accents, a yellow focus ring: readable at a glance or from across a room |
+| **Warm night** | dim amber over OLED black, easy on eyes adjusted to the dark (charts too) |
+
+Data colours keep their meaning in every theme (heart is still blue, oxygen orange, ...); only
+the page, text, borders and chart axes change.
 
 ### Updates (sidebar)
 
@@ -399,7 +422,7 @@ A patch never moves you to a new version, and each action needs a second tap to 
 Each patch lists its **patch notes** under its title (from the release's `PATCH_NOTES.md`, which the push script writes into the commit), so you can see what it changes before applying it.
 
 - **Needs a git clone**, not an unzipped copy: `git clone https://github.com/Meapy011/Bio-dash`
-  and run the dashboards from the newest release folder (`Bio-dash/V5.2_Dashboard`).
+  and run the dashboards from the newest release folder (`Bio-dash/V5.3_Dashboard`).
 - **Only fast-forwards from the clone's own remote.** It refuses if tracked files were edited
   locally or the branch has diverged, and says which files; nothing of yours is overwritten.
 - **Recordings and settings are safe.** Recordings live in `Documents/Bio-dash`; saved settings
@@ -510,6 +533,140 @@ readings in that row.
 - **Left out unless you `--include` them:** the fast waveforms (`ecg`, `acc`; use a matching step
   such as `--step 8ms`).
 - `--curated` keeps only the named signals; `--complete` keeps only rows where every signal has a value.
+
+## For ReaLLM-Forge: an integer CSV for `csv_mc_int`
+
+ReaLLM-Forge's `data/csv_mc_int` makes one multicontext dataset per CSV column, each with its own
+vocabulary (`token_id = value - int_min`). It needs a whole number in every cell, nothing blank, and
+a range for every column. `tools/export_mcint.py` (or **For ReaLLM-Forge** on the analysis page)
+writes the one-clock table exactly that way:
+
+```bash
+python3 tools/export_mcint.py 2026-10-07 --step 10s            # one day, a row every 10 s
+python3 tools/export_mcint.py --from "2026-10-07 22:00" --to "2026-10-08 07:00" --only hr,spo2,rr
+python3 tools/export_mcint.py 2026-10-07 --forge ~/ReaLLM-Forge  # ...and build the datasets too
+```
+
+It writes a folder in `Documents/Bio-dash/Exports/` with three files:
+
+| File | |
+|---|---|
+| `<name>.csv` | `minute_of_day` (0-1439), `second` (0-59, when rows are under a minute apart), then one column per signal |
+| `<name>.columns.json` | each column's signal, unit, scale, range and "no reading" value |
+| `<name>.prepare.sh` | `bash <name>.prepare.sh ~/ReaLLM-Forge` runs `data/csv_mc_int/get_dataset.sh` with a `--range` for every column |
+
+- **Fixed ranges per signal,** so exports from different days share vocabularies and can be trained
+  together: `hr_bpm` 0-250, `rr_ms` 0-2500, `hrv_rmssd_ms` 0-500, `spo2_pct` 0-100, `pulse_bpm`
+  0-250, `bottle_ml` 0-5000, `sip_ml` 0-2000, `drunk_today_ml` 0-10000, `co2_ppm` 0-10000, PM
+  0-10000 (in 0.1 µg/m³), `temp_c_x10` -400-850, `rh_pct_x10` 0-1000, VOC / NOx index 0-500, `hcho_ppb`
+  0-2000. A reading outside its range is set to the nearest end and counted ("clipped").
+- **Decimals are kept by scaling:** 21.4 °C is `214` in `temp_c_x10`. Atmos columns carry the sensor
+  name (`co2_scd30_ppm`).
+- **No blanks:** after the usual filling (see above), a gap of up to `--hold` (2 min) in a reading is
+  held at its last value; anything still empty is `-1` (one below the column's range; `-401` for
+  temperature): the device wasn't recording. `--missing drop` leaves those rows out instead. A row
+  where no device was recording is never written.
+- `--real-flags` adds `<column>_real` (1 = a real reading in that step). `--raw` adds every other
+  numeric column, with a range from its own readings (so those can differ between days).
+- **Back to real units:** `python3 tools/mcint_decode.py sample.csv <name>.columns.json` turns a CSV
+  that `sample.py` wrote (or the export itself) back into °C, µg/m³ and so on, with blanks for `-1`.
+
+Then train and sample with ReaLLM-Forge's demo:
+`CSV_MC_OUTPUT_ROOT=bio_dash_mcint bash demos/csv_mc_int_demo.sh <name>.csv`
+(it uses the CSV as the sampling prompt, so a short export, an hour say, makes a better prompt).
+
+## Just the ECG
+
+`tools/export_ecg.py` writes the Polar H10's ECG on its own, nothing else from Bio-dash:
+
+```bash
+python3 tools/export_ecg.py 2026-10-07                    # one day
+python3 tools/export_ecg.py --from "2026-10-07 22:00" --to "2026-10-08 07:00" --method cubic
+python3 tools/export_ecg.py 2026-10-07 --uv               # whole microvolts, for ReaLLM-Forge csv_mc_int
+```
+
+| File | |
+|---|---|
+| `<name>_raw.csv` | `Timestamp_Epoch_ms,ECG_mV`: every sample as recorded (130 Hz), nothing changed. Polar-dash and Omni recordings merged in time order, the same strap's duplicate samples dropped |
+| `<name>_200hz.csv` | `ECG_mV` only, no timestamp: an even 200 Hz, interpolated, so row k is k/200 s into its stretch |
+| `<name>_200hz_stretches.csv` | where each unbroken stretch starts in the 200 Hz file, its start time and the gap before it |
+
+- **Stretches:** a gap of more than 3 samples (~23 ms) ends one. Nothing is invented across a gap;
+  the stretches file shows where the 200 Hz file jumps. `--split` writes one file per stretch;
+  stretches under 10 s are left out (`--min-stretch`).
+- **How it's resampled:** the strap samples evenly on its own clock but the recorded timestamps are
+  whole milliseconds, so each sample's time comes from its position in the stretch (at the
+  stretch's measured rate), then `--method linear` (default) or `cubic` (Catmull-Rom; about three
+  times closer on a sharp QRS spike) gives 200 Hz. `--hz` for another rate.
+- `--uv`: whole microvolts (what the H10 measures, so nothing is lost), clipped to ±10000 µV, with
+  the `--range` for csv_mc_int printed.
+
+## Restart everything
+
+When Bluetooth gets stuck ("device busy", a worker that won't reconnect, an old release still
+holding a radio), **sidebar → Restart → Restart everything** clears it in one go. From a terminal:
+
+```bash
+./restart_all.py                 # stop everything, reset Bluetooth, start again
+./restart_all.py --stop          # stop everything and leave it stopped
+./restart_all.py --no-bluetooth  # leave Bluetooth alone
+./restart_all.py --dry-run       # show what it would stop and start
+```
+
+- **What it stops:** every `biodash-*` service, and every process running a script from any
+  `V*_Dashboard` folder (dashboards, Bluetooth workers, their helpers), whichever release and however
+  it was started. An editor or a terminal open in the folder is left alone, and so is the updater.
+- **Gently first:** Ctrl+C (recordings close properly), then SIGTERM after 6 s, then SIGKILL.
+- **Bluetooth:** restarts the bluetooth service if allowed without a password, otherwise disconnects
+  every connected device and switches each radio off and on. Headphones or a keyboard on Bluetooth
+  drop for a few seconds and reconnect. To let it restart the service, run once:
+  `echo "$USER ALL=(root) NOPASSWD: $(command -v systemctl) restart bluetooth" | sudo tee /etc/sudoers.d/biodash-bluetooth && sudo chmod 440 /etc/sudoers.d/biodash-bluetooth`
+- **Starting again:** services that were running are started; dashboards started by hand come back
+  in the background (output in `~/.cache/bio-dash/logs/`). Omni needs sudo, so start it yourself.
+- Same access rule as Reboot: from this computer only, unless the dashboards run with `BIODASH_ALLOW_POWER=1`.
+
+## Recordings from your other machines
+
+`tools/fleet.py` finds Bio-dash recordings on your other computers over Tailscale and SSH, pulls
+them here, and can push them to a cloud. Nothing is installed on the other machines (they need `python3`, which Ubuntu has).
+
+```bash
+./tools/fleet.py list                    # machines on your tailnet, and which are online
+./tools/fleet.py check                   # what each online machine has recorded
+./tools/fleet.py pull                    # copy what's new from all of them
+./tools/fleet.py pull roomba ubuntu-1 --since 2026-10-01 --only polar,hydro
+./tools/fleet.py pull --merge            # into this computer's own recordings folder
+```
+
+- **Which machines:** the online ones in `tailscale status` tagged `tag:ssh` (`--tag ""` for all of
+  them), or the ones you name (`user@host` works, and then Tailscale isn't needed). This computer is
+  skipped. It uses plain `ssh` (Tailscale SSH, a normal SSH server and `~/.ssh/config` all work);
+  `--user` if your user name differs there. If a machine asks you to log in or approve the
+  connection, run `ssh <machine>` once by hand.
+- **Where they go:** `Documents/Bio-dash-machines/<machine>/`, laid out like a recordings folder, so
+  `BIODASH_DATA_DIR=~/Documents/Bio-dash-machines/roomba python3 tools/interpolate.py --list` (or the
+  analysis dashboard with the same variable) reads one machine. `--merge` puts them in this computer's
+  own recordings folder instead: a file already here is only replaced by a longer copy of itself (a
+  recording that kept growing, checked byte for byte), and a different recording with the same name
+  goes in a device folder of its own, `<device> @<machine>`, so nothing here is overwritten.
+- **Only what's new or has grown is copied** (rsync when both sides have it, otherwise tar over
+  ssh), so running it again is quick. `--dry-run` shows what it would copy; `Exports/` and
+  `Reports/` are left out.
+- **Pushing online:** `./tools/fleet.py push --to gdrive:Bio-dash` uploads the raw recordings with
+  [rclone](https://rclone.org), so any cloud it knows works (Google Drive, Dropbox, OneDrive, S3,
+  Backblaze B2, Nextcloud ...). Set one up once with `rclone config` (`sudo apt install rclone`); the
+  name you give it goes before the colon. This computer's recordings go to `<dest>/<this computer>/`
+  and each pulled machine to `<dest>/<machine>/`. Only new and grown files go up, nothing online is
+  ever deleted, and `--to` is remembered, so later it's just `./tools/fleet.py push --pull-first`
+  (pull from every machine, then upload). These are health recordings: put an rclone **crypt**
+  remote on top of the cloud one and they're encrypted, names included, before they leave.
+- **Uploading by itself:** `./tools/fleet.py schedule` sets up two timers (systemd, your user):
+  every 5 minutes everything except the ECG and motion waveforms, and every hour everything. A
+  recording grows for as long as its session lasts and a grown file goes up whole again, so a
+  night's ECG (~11 MB an hour) every 5 minutes would be gigabytes an hour; heart rate, SpO₂, air and
+  water are small. `--every 10min`, `--full-every 6h`, `--skip ""` (everything every time) change
+  that; `schedule --off` stops it. Run `sudo loginctl enable-linger $USER` once so it keeps going
+  when you're logged out, and run `schedule` again from the new folder after an upgrade.
 
 ## What's around: a standalone Bluetooth scanner
 

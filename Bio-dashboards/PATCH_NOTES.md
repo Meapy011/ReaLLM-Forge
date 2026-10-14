@@ -1,7 +1,12 @@
-# V5.2: adapters tested on the Orin, the boot catch, and docs for every radio
-- Every Bluetooth adapter tried and why it did or didn't work: a table and two new diagrams in docs/ARCHITECTURE.md section 9
-- UB500 Plus proven with the bottle: 10/10 cold connects, heard 8x in 25 s at -60 dBm, chosen by Hydro-dash after a reboot
-- Found: the Orin won't power on with a UB500 Plus and an ASUS BT400 both attached; plug the ASUS dongles in after boot (TROUBLESHOOTING 14)
-- BCM20702 firmware patch for the ASUS BT400 (build 0000 -> 1467), with checksum and steps (TROUBLESHOOTING 15)
-- hydro_test.py suggests the right bottle name when the one given is almost right
-- How to vet any adapter with the bottle (TROUBLESHOOTING 13), and why a 12 V USB-C trigger is unreliable for the Orin
+# tools/export_ecg.py: just the ECG, raw with timestamps and an even 200 Hz; fleet.py pulls and pushes recordings
+- Analysis page: "For ReaLLM-Forge" downloads the selected signals as an integer CSV that data/csv_mc_int takes as it is
+- Whole numbers everywhere: decimals kept by scaling (temp_c_x10), time as minute_of_day and second, -1 = not recording
+- Fixed range per signal, so exports from different days share vocabularies and train together
+- Each export brings columns.json (scales, ranges) and prepare.sh (get_dataset.sh with every --range)
+- tools/export_mcint.py does the same from the command line; --forge ~/ReaLLM-Forge builds the datasets too
+- tools/mcint_decode.py turns sampled CSVs back into real units
+- Sidebar -> Restart -> Restart everything (or ./restart_all.py): stops every dashboard and Bluetooth worker from any release, resets Bluetooth, starts again what was running
+- Hydro: after "It's empty now" a banner stays up until "It's full now" (the bottle counts no sips until it has both)
+- Hydro isn't pinned to a radio: every radio listens and the one that hears the bottle best connects (failed radios are passed over)
+- tools/fleet.py: check your Tailscale machines for recordings, pull what's new, push to a cloud with rclone, and schedule uploads (every 5 min; ECG hourly)
+- tools/export_ecg.py: the ECG on its own, raw with timestamps and resampled to 200 Hz without (--uv for csv_mc_int)

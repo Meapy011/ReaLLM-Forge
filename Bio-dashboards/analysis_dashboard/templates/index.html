@@ -8,6 +8,8 @@
     <script src="/static/vendor/chart.min.js"></script>
     <script src="/static/vendor/luxon.min.js"></script>
     <script src="/static/vendor/chartjs-adapter-luxon.min.js"></script>
+    <link rel="stylesheet" href="/static/css/themes.css">
+    <script src="/static/js/themes.js"></script>
 </head>
 <body>
     <header>
@@ -73,6 +75,7 @@
                 <label><input type="checkbox" id="band" checked> Show min–max inside each step</label>
                 <span style="flex:1"></span>
                 <a class="btn" id="export" href="#" download>Download CSV</a>
+                <a class="btn" id="export-mcint" href="#" download title="Whole numbers with a fixed range per column, for ReaLLM-Forge data/csv_mc_int">For ReaLLM-Forge</a>
             </div>
             <div class="readout" id="readout"><span>Hover a chart to read every signal at that moment.</span></div>
             <div id="plots"></div>
@@ -80,6 +83,11 @@
                 Dashed stretches are estimates: a straight line between readings, a level carried forward, or no sip in that step.
                 Nothing is drawn across a pause of more than a minute. The CSV has the same values, plus a <code>.n</code> column per signal:
                 how many real readings went into each row (0 = estimate).</p>
+            <p class="note"><b>For ReaLLM-Forge</b> downloads a zip for <code>data/csv_mc_int</code>: the same signals as whole numbers
+                (decimals kept by scaling, e.g. <code>temp_c_x10</code>), the time as <code>minute_of_day</code> and <code>second</code>,
+                and <code>-1</code> (one below each column's range) where a device wasn't recording. Inside: the CSV, a
+                <code>.columns.json</code> for turning samples back into real units (<code>tools/mcint_decode.py</code>) and a
+                <code>.prepare.sh</code> that runs <code>get_dataset.sh</code> with every <code>--range</code>. Uses the step shown.</p>
         </section>
     </main>
 

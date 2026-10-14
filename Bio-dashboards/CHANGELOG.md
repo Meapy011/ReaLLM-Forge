@@ -1,8 +1,55 @@
 # Changelog
 
+## V5.3
+
+V5.2 plus an export made for ReaLLM-Forge, and one button to restart everything:
+
+- **For ReaLLM-Forge:** the analysis page's new button (and `tools/export_mcint.py`) writes the
+  signals on one clock as an integer CSV that ReaLLM-Forge's `data/csv_mc_int` takes as it is: a
+  whole number in every cell, decimals kept by scaling (`temp_c_x10`), the time as `minute_of_day`
+  and `second`, a fixed range per signal so different days share vocabularies, and `-1` where a
+  device wasn't recording (csv_mc_int allows no blanks). Short gaps are held at the last reading
+  first; `--missing drop` leaves incomplete rows out instead.
+- **Restart everything** (sidebar → Restart, or `./restart_all.py`): stops every Bio-dash dashboard
+  and Bluetooth worker on the computer, from any release folder, as a service or started by hand
+  (an old release still running in another folder is caught too); resets Bluetooth; then starts
+  again whatever was running. Workers get Ctrl+C first so recordings close properly, then SIGTERM,
+  then SIGKILL. Bluetooth: the bluetooth service is restarted if that's allowed without a password
+  (a sudoers line is offered), otherwise every connected device is disconnected and each radio
+  switched off and on. "Reset Bluetooth too" can be unticked. Hand-started dashboards come back in
+  the background with their output in `~/.cache/bio-dash/logs/`; Omni needs sudo so it's left for
+  you. Same access rule as Reboot: this computer only, unless `BIODASH_ALLOW_POWER=1`.
+- **Hydro: a banner after "It's empty now"** until you press "It's full now". The bottle takes empty
+  and full as one calibration and counts no sips until it has both, which looked like the dashboard
+  had stopped updating. The banner has its own "It's full now" button, survives reloads and
+  restarts, and clears itself if a live sip arrives (the bottle is counting again).
+- **Hydro isn't pinned to a radio any more:** it listens on every radio and connects through the one
+  that hears the bottle best (the last radio that worked gets a small head start). A radio whose
+  connection fails is passed over for 10 minutes, or for a week (remembered across restarts) when
+  the bottle's service list came back empty through it, the Bluetooth 4.0 problem. The pin could lock
+  onto the wrong radio now and then. Pinning is still in the debug panel; old pins don't carry over.
+- **`tools/fleet.py`: recordings from your other machines.** `check` lists what each online
+  Tailscale machine (tagged `tag:ssh`) has recorded; `pull` copies what's new or has grown, into one
+  folder per machine or (`--merge`) into this computer's recordings without overwriting anything.
+  Plain ssh, nothing installed on the other side. `push --to gdrive:Bio-dash` uploads the raw
+  recordings (this computer's and every pulled machine's) to any cloud rclone knows: new and grown
+  files only, nothing online deleted, the destination remembered (`push --pull-first` does both).
+  `schedule` uploads by itself (systemd user timers): every 5 min without the ECG / motion
+  waveforms, everything hourly, one upload at a time. `tools/test_fleet.py`: 33 checks with
+  stand-in machines and a real rclone.
+- **`tools/export_ecg.py`: just the ECG.** The raw samples with their timestamps, and an even
+  200 Hz (no timestamps, interpolated linear or cubic within each unbroken stretch, a stretches file
+  saying where the gaps were); `--uv` for whole microvolts. `tools/test_export_ecg.py`: 18 checks.
+- Each export comes with `<name>.columns.json` (scales, ranges, "no reading" values) and
+  `<name>.prepare.sh`, which runs `get_dataset.sh` with every `--range` filled in.
+  `tools/export_mcint.py --forge ~/ReaLLM-Forge` builds the datasets in one go.
+- `tools/mcint_decode.py` turns what `sample.py` generates back into real units.
+- `analysis_dashboard/test_mcint.py`: 29 checks against hand-worked values; with `FORGE=` set it also
+  runs ReaLLM-Forge's own prepare script on the result.
+
 ## V5.2
 
-Everything patched into V5.0 since its release (the Bluetooth scanner, water calculations with the
+Themes for every dashboard, and everything patched into V5.0 since its release (the Bluetooth scanner, water calculations with the
 local weather, the Bluetooth 5 dongle confirmation, power-cut protection; see V5.0 below), gathered
 into one release, plus what a night of testing radios on the Jetson Orin taught us:
 
@@ -21,12 +68,17 @@ into one release, plus what a night of testing radios on the Jetson Orin taught 
   file, its checksum and how to install it (ASUS BT400 goes from build 0000 to 1467).
   TROUBLESHOOTING 15.
 - **`hydro_test.py` says when the name is almost right:** a run that doesn't find the bottle lists
-  the bottle-like names it did see ("Seen instead: h2o00003095 <- did you mean this one?"). A
+  the bottle-like names it did see ("Seen instead: h2o00001234 <- did you mean this one?"). A
   one-character typo in the name had made a working radio look dead.
 - **Powering the Orin from USB-C:** why a 12 V trigger board works with some chargers only (12 V is
   optional in USB Power Delivery; 20 V is required above 45 W). ARCHITECTURE section 9.
 - Radio pins and the last device carry across upgrades (the updater copies them); the docs now say
   so, instead of warning that they reset.
+- **Themes for every dashboard:** Auto (follows the device's light / dark setting), Dark, Light,
+  OLED black, High contrast and Warm night, picked under **Theme** in the sidebar. One choice
+  applies to all six dashboards (a cookie shared by every port; open dashboards follow within
+  seconds). Chart axes and grids and the ECG monitor are recoloured to match; data colours keep
+  their meaning. `static/js/themes.js` + `static/css/themes.css`, the same in every dashboard.
 
 ## V5.0
 
