@@ -105,6 +105,9 @@ const DebugPanel = (() => {
             row('ACC frames', r.acc_frames_per_s != null ? `${r.acc_frames_per_s}/s × ${r.acc_samples_per_frame}` : '—') +
             row('HR notifications', r.hr_notifications_per_s != null ? `${r.hr_notifications_per_s}/s` : '—') +
             row('R-R intervals', r.rr_per_min != null ? `${r.rr_per_min}/min` : '—') +
+            row('ACC rate, strap clock', r.acc_hz_measured != null ? `${r.acc_hz_measured} Hz` : '—') +
+            row('Clock restarts', r.clock_reanchors != null ? r.clock_reanchors : '—',
+                r.clock_reanchors ? 'text-amber-400' : 'text-emerald-400') +
             row('Dropped ECG / ACC', r.ecg_dropped != null ? `${r.ecg_dropped} / ${r.acc_dropped}` : '—',
                 (r.ecg_dropped || r.acc_dropped) ? 'text-amber-400' : 'text-emerald-400'));
     }

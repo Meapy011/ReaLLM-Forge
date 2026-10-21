@@ -94,6 +94,9 @@ const DebugPanel = (() => {
             row('ACC', live ? `${r.acc_hz} / ${n.acc_hz} Hz` : '—', live ? health(r.acc_hz, n.acc_hz) : 'text-slate-500') +
             row('ECG frames', live ? `${r.ecg_frames_per_s}/s × ${r.ecg_samples_per_frame}` : '—') +
             row('HR notifications', live ? `${r.hr_notifications_per_s}/s` : '—') +
+            row('ACC rate, strap clock', r.acc_hz_measured != null ? `${r.acc_hz_measured} Hz` : '—') +
+            row('Clock restarts', r.clock_reanchors != null ? r.clock_reanchors : '—',
+                r.clock_reanchors ? 'text-amber-400' : 'text-emerald-400') +
             row('Dropped ECG / ACC', r.ecg_dropped != null ? `${r.ecg_dropped} / ${r.acc_dropped}` : '—',
                 (r.ecg_dropped || r.acc_dropped) ? 'text-amber-400' : 'text-emerald-400') +
             row('Link failures', p.link_failures ?? '—', countCls(p.link_failures)));

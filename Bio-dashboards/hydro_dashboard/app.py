@@ -549,5 +549,21 @@ async def restart_all(request: Request):
     return JSONResponse(out, status_code=code)
 
 
+@app.get("/api/device-names")
+def get_device_names():
+    return {"names": bt_debug.device_names()}
+
+
+@app.post("/api/device-names")
+async def post_device_name(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    code, out = bt_debug.set_device_name(body.get("key"), body.get("name"))
+    return JSONResponse(out, status_code=code)
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=5004, log_level="warning")

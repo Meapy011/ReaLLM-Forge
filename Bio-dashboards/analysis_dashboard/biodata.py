@@ -132,9 +132,20 @@ class Recording:
         self.family = family_of(dashboard, stream)
 
 
-def recordings(root, start_ms=None, end_ms=None, include=()):
+REPLAY_INFO = "_replay_info.json"   # Polar-dash's replay_session.py writes <time>_replay_info.json beside a replay
+
+
+def is_replay(path):
+    """True for a file of a session written by Polar-dash's replay_session.py rather than recorded from a
+    strap: a replay copies a real session (often a held-out one) with new timestamps, so it must stay out
+    of exports (training data) and fleet.py push."""
+    folder, name = os.path.split(path)
+    return os.path.isfile(os.path.join(folder, name[:8] + REPLAY_INFO))     # name: HH-MM-SS_<stream>.csv
+
+
+def recordings(root, start_ms=None, end_ms=None, include=(), skip_replays=True):
     """Recording files whose day folder can overlap [start_ms, end_ms] (a session that started
-    the day before may run past midnight)."""
+    the day before may run past midnight). Replayed sessions are left out unless skip_replays=False."""
     out = []
     for path in glob.glob(os.path.join(root, "*", "*", "*", "*.csv")):
         parts = path.split(os.sep)
@@ -146,6 +157,8 @@ def recordings(root, start_ms=None, end_ms=None, include=()):
             continue
         stream = m.group(4)
         if stream in SKIP_STREAMS or (stream in BIG_STREAMS and stream not in include):
+            continue
+        if skip_replays and is_replay(path):
             continue
         if start_ms is not None:
             try:

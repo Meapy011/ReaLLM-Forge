@@ -91,6 +91,16 @@ check("and now identical", tree(os.path.join(dest, "alpha")), tree(os.path.join(
 code, out = fleet("pull", "--only", "polar", "--dry-run", "beta")
 check("--only / --dry-run", ("up to date" in out, code), (True, 0))
 
+# a replayed session on a machine is never pulled (it has a <time>_replay_info.json beside it)
+rp = os.path.join(REMOTE, "alpha", "Documents", "Bio-dash", "Polar H10", "Polar H10 REPLAY", "2026-10-21")
+os.makedirs(rp)
+for n in ("09-00-00_ecg.csv", "09-00-00_acc.csv"):
+    open(os.path.join(rp, n), "w").write("Timestamp_Epoch_ms,ECG_mV,HR_BPM\n1,0.1,60\n")
+open(os.path.join(rp, "09-00-00_replay_info.json"), "w").write("{}")
+fleet("pull", "alpha")
+check("replayed sessions aren't pulled", any("REPLAY" in k for k in tree(os.path.join(dest, "alpha"))), False)
+shutil.rmtree(os.path.join(REMOTE, "alpha", "Documents", "Bio-dash", "Polar H10", "Polar H10 REPLAY"))
+
 # --merge into this computer's own recordings: its own files are never touched
 mine = os.path.join(LOCAL, "Documents", "Bio-dash")
 subprocess.run([sys.executable, SAMPLE, "--days", "1", "--seed", "99", mine], check=True, capture_output=True)

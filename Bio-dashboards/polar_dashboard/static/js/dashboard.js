@@ -27,6 +27,7 @@ function beep() {
 const monitor = new EcgMonitor({
     grid: document.getElementById('ecgGrid'),
     trace: document.getElementById('ecgTrace'),
+    overlay: document.getElementById('ecgForecast'),     // live forecast, drawn ahead of the pen
     heart: document.getElementById('mon-heart'),
     noSignal: document.getElementById('ecg-nosignal'),
     onBeat: beep,
@@ -63,6 +64,9 @@ const ppiChart = new Chart(document.getElementById('ppiChart').getContext('2d'),
     type: 'line', data: { datasets: [{ borderColor: '#818cf8', backgroundColor: '#818cf8', borderWidth: 0, pointRadius: 4, data: [] }] },
     options: chartOptions(1500)
 });
+
+// --- Live forecasts (forecast.js): 🔮 pills on the ECG and accelerometer cards ---
+const forecast = new ForecastOverlay({ monitor, ecgView, accChart });
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -143,7 +147,7 @@ async function updateScannerList() {
         deviceList.innerHTML = devices.map(d => `
             <div class="bg-slate-700/50 p-4 rounded-xl border border-slate-600 flex flex-col gap-3 justify-between">
                 <div>
-                    <div class="font-bold text-slate-200">${esc(d.name)}</div>
+                    <div class="font-bold text-slate-200">${esc(d.name)}${window.Nick ? Nick.tag(d.name, d.address) : ''}</div>
                     <div class="text-xs text-slate-400 font-mono">${esc(d.address)} · <span data-rssi="${esc(d.address)}">${esc(d.rssi)} dBm</span></div>
                 </div>
                 <button data-mac="${esc(d.address)}" class="bg-sky-600 hover:bg-sky-500 text-white text-sm font-bold py-2 px-4 rounded w-full transition-colors">
@@ -200,6 +204,7 @@ const handlers = {
     ecg(rows) {
         ecgView.push(rows);
         ecgPeakToPeak(rows);
+        forecast.onEcgRows(rows);
         const [, mv, hr] = rows[rows.length - 1];
         ecgEl.textContent = mv.toFixed(2);
         if (hr > 0) hrEl.textContent = monHrEl.textContent = hr;
@@ -210,6 +215,7 @@ const handlers = {
             accY.push({ x: ts, y: y });
             accZ.push({ x: ts, y: z });
         }
+        forecast.onAccRows(rows);
     },
     ppi(rows) {
         for (const [ts, ppi, hr] of rows) {
@@ -221,6 +227,9 @@ const handlers = {
     },
 };
 
+// Forecast messages are overlays, not live data: they don't mark the strap as streaming
+const FORECAST_TYPES = new Set(['ecg_forecast', 'acc_forecast', 'forecast_settings']);
+
 function connectWs() {
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
     ws.onopen = () => { if (!uiIsConnected) setStatus('System Online', 'wait'); };
@@ -230,6 +239,7 @@ function connectWs() {
     };
     ws.onmessage = (event) => {
         const packet = JSON.parse(event.data);
+        if (FORECAST_TYPES.has(packet.type)) return forecast.onMessage(packet);
         const h = handlers[packet.type];
         if (h && packet.rows && packet.rows.length) {
             DebugPanel.onPacket(packet.type, packet.rows.length);

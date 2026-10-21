@@ -67,7 +67,7 @@ async function updateDeviceList() {
         deviceList.innerHTML = devices.map(d => `
             <div class="bg-slate-700/50 p-4 rounded-xl border border-slate-600 flex flex-col gap-3 justify-between">
                 <div>
-                    <div class="font-bold text-slate-200">${esc(d.name)}</div>
+                    <div class="font-bold text-slate-200">${esc(d.name)}${window.Nick ? Nick.tag(d.name, d.address) : ''}</div>
                     <div class="text-xs text-slate-400 font-mono">${esc(d.address)} · <span data-rssi="${esc(d.address)}">${esc(d.rssi)} dBm</span></div>
                 </div>
                 <button data-mac="${esc(d.address)}" class="bg-sky-600 hover:bg-sky-500 text-white text-sm font-bold py-2 px-4 rounded w-full transition-colors">

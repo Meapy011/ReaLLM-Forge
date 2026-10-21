@@ -105,7 +105,8 @@ if os.path.isdir(root):
                 if len(day) != 10 or not os.path.isdir(yp) or (args.get("since") and day < args["since"]):
                     continue
                 for name in os.listdir(yp):
-                    if name.endswith(".csv"):
+                    # a session written by Polar-dash's replay_session.py isn't a recording: never pull it
+                    if name.endswith(".csv") and not os.path.exists(os.path.join(yp, name[:8] + "_replay_info.json")):
                         path = os.path.join(yp, name)
                         try:
                             st = os.stat(path)
@@ -509,10 +510,24 @@ def push_sources(a):
     return out
 
 
+def replay_rules(src):
+    """rclone rules leaving out sessions written by Polar-dash's replay_session.py (a <time>_replay_info.json
+    beside them): a replay copies a real session, often a held-out one, with new timestamps."""
+    rules = []
+    for dirpath, dirnames, files in os.walk(src):
+        dirnames[:] = sorted(d for d in dirnames if d not in ("Exports", "Reports"))
+        for f in sorted(files):
+            if f.endswith("_replay_info.json"):
+                rel = os.path.relpath(os.path.join(dirpath, f[: -len("_replay_info.json")]), src)
+                rules.append("- /" + re.sub(r"([\[\]{}*?\\])", r"\\\1", rel.replace(os.sep, "/")) + "_*")
+    return rules
+
+
 def rclone_rules(src, only, skip=()):
     """rclone filter rules: <dashboard>/<device>/<YYYY-MM-DD>/*.csv only, not Exports/ or Reports/,
-    and not the streams in `skip` (e.g. ecg, acc: the big waveforms)."""
-    rules = ["- /Exports/**", "- /Reports/**"] + [f"- *_{re.sub(r'[^\w-]', '', st)}.csv" for st in skip]
+    not replayed sessions, and not the streams in `skip` (e.g. ecg, acc: the big waveforms)."""
+    names = [re.sub(r"[^\w-]", "", st) for st in skip]          # (no backslash inside an f-string: Python 3.10)
+    rules = ["- /Exports/**", "- /Reports/**"] + replay_rules(src) + [f"- *_{n}.csv" for n in names if n]
     dashes = ["*"]
     if only:
         dashes = [d for d in sorted(os.listdir(src)) if any(w in d.lower() for w in only)
@@ -720,7 +735,7 @@ def main():
     ap.add_argument("--timeout", type=int, default=8)
     ap.add_argument("--include-self", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--ssh-cmd", help=argparse.SUPPRESS)          # testing: stands in for ssh
-    a = ap.parse_args()
+    a = ap.parse_intermixed_args()       # names may come after the options (Python 3.10 needs this)
     if a.since and not DAY_RE.match(a.since):
         sys.exit("--since: YYYY-MM-DD")
     if a.merge and a.into:

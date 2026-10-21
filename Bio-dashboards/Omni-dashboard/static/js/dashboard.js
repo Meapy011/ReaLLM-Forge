@@ -100,7 +100,7 @@ async function fetchScanners() {
                         div.className = 'bg-slate-700/50 p-4 rounded-xl border border-slate-600 flex justify-between items-center';
                         div.innerHTML = `
                             <div>
-                                <div class="font-bold text-slate-200 text-sm">${esc(d.name)}</div>
+                                <div class="font-bold text-slate-200 text-sm">${esc(d.name)}${window.Nick ? Nick.tag(d.name, d.address) : ''}</div>
                                 <div class="text-[10px] text-slate-400 font-mono mt-1">${esc(d.address)} · ${esc(d.rssi)} dBm</div>
                             </div>
                             <button class="bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold py-2 px-5 rounded transition-colors" 

@@ -343,6 +343,128 @@ async def restart_all(request: Request):
     return JSONResponse(out, status_code=code)
 
 
+# ---------- live forecasts (forecast_service.py) ----------
+# The forecast service runs next to this app (run_dashboard.sh starts it), tails the same session files and
+# posts its forecasts here; they go out on the websocket as ecg_forecast / acc_forecast messages, which the
+# page draws as overlays (they don't count as live data). The page's 🔮 Forecast pills switch the overlays
+# (saved in forecast_settings.json); the service reads them with its heartbeat and only computes what is on.
+FORECAST_SETTINGS_FILE = os.path.join(BASE_DIR, "forecast_settings.json")
+FORECAST_DEFAULTS = {"ecg": False, "acc": False, "horizon_s": 1.0, "refresh_s": 0.5, "samples": 8}
+FORECAST_LIMITS = {"horizon_s": (0.25, 1.0), "refresh_s": (0.25, 5.0), "samples": (1, 32)}
+
+
+def _load_forecast_settings():
+    s = dict(FORECAST_DEFAULTS)
+    try:
+        with open(FORECAST_SETTINGS_FILE) as f:
+            s.update({k: v for k, v in json.load(f).items() if k in FORECAST_DEFAULTS})
+    except (OSError, ValueError, AttributeError):
+        pass
+    return s
+
+
+forecast_settings = _load_forecast_settings()
+forecast_service = {"last_seen": 0.0, "status": {}}
+
+
+def _forecast_local(request):
+    """The service runs on this computer: forecasts / heartbeats from elsewhere are refused
+    (BIODASH_FORECAST_REMOTE=1 allows them, e.g. a service on another machine)."""
+    host = request.client.host if request.client else ""
+    return host in ("127.0.0.1", "::1", "localhost") or os.environ.get("BIODASH_FORECAST_REMOTE") == "1"
+
+
+def _forecast_view():
+    seen = forecast_service["last_seen"]
+    age = time.time() - seen
+    return {"settings": forecast_settings,
+            "service": {**forecast_service["status"], "online": bool(seen) and age < 4.0,
+                        "age_s": round(age, 1) if seen else None}}
+
+
+class ForecastSettingsRequest(BaseModel):
+    ecg: bool | None = None
+    acc: bool | None = None
+    horizon_s: float | None = None
+    refresh_s: float | None = None
+    samples: int | None = None
+
+
+@app.get("/api/forecast/settings")
+def get_forecast_settings():
+    return _forecast_view()
+
+
+@app.post("/api/forecast/settings")
+async def set_forecast_settings(req: ForecastSettingsRequest):
+    dump = getattr(req, "model_dump", None) or req.dict
+    for k, v in dump(exclude_none=True).items():
+        if k in FORECAST_LIMITS:
+            lo, hi = FORECAST_LIMITS[k]
+            v = type(FORECAST_DEFAULTS[k])(min(hi, max(lo, v)))
+        forecast_settings[k] = v
+    try:
+        tmp = FORECAST_SETTINGS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(forecast_settings, f)
+        os.replace(tmp, FORECAST_SETTINGS_FILE)
+    except OSError:
+        pass
+    view = _forecast_view()
+    await manager.broadcast(json.dumps({"type": "forecast_settings", **view}))
+    return view
+
+
+@app.post("/api/forecast/heartbeat")
+async def forecast_heartbeat(request: Request):
+    """From forecast_service.py once a second: its state; the answer is the overlay settings."""
+    if not _forecast_local(request):
+        return JSONResponse({"error": "the forecast service must run on this computer"}, status_code=403)
+    try:
+        status = await request.json()
+    except Exception:
+        status = {}
+    forecast_service["last_seen"] = time.time()
+    forecast_service["status"] = status if isinstance(status, dict) else {}
+    return forecast_settings
+
+
+@app.post("/api/forecast")
+async def post_forecast(request: Request):
+    """From forecast_service.py: one forecast (band, median, representative sample) -> the browsers."""
+    if not _forecast_local(request):
+        return JSONResponse({"error": "the forecast service must run on this computer"}, status_code=403)
+    try:
+        fc = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad JSON"}, status_code=400)
+    kind = fc.get("kind") if isinstance(fc, dict) else None
+    if kind not in ("ecg", "acc"):
+        return JSONResponse({"error": "kind must be ecg or acc"}, status_code=400)
+    if not forecast_settings.get(kind):
+        return {"ok": False, "reason": f"the {kind} overlay is off"}
+    fc["type"] = f"{kind}_forecast"
+    if manager.active_connections:
+        await manager.broadcast(json.dumps(fc, separators=(",", ":")))
+    return {"ok": True}
+
+
+@app.get("/api/device-names")
+def get_device_names():
+    return {"names": bt_debug.device_names()}
+
+
+@app.post("/api/device-names")
+async def post_device_name(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    code, out = bt_debug.set_device_name(body.get("key"), body.get("name"))
+    return JSONResponse(out, status_code=code)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=False)

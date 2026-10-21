@@ -28,12 +28,19 @@ timestamps are whole milliseconds (7 or 8 ms apart). So within a stretch each sa
 taken from its position (first + i x the stretch's measured spacing, ~130 Hz), then resampled to
 200 Hz with --method linear (default) or cubic (Catmull-Rom: follows the QRS peaks more closely).
 
+--with-acc adds the strap's motion (the H10's accelerometer, X / Y / Z in mg, 200 Hz): a raw
+<name>_acc_raw.csv with timestamps, and three more columns in the 200 Hz file (ACC_X_mg, ACC_Y_mg,
+ACC_Z_mg) on exactly the same rows as the ECG. Its timestamps get the same position-based treatment,
+and the 200 Hz file only keeps stretches where BOTH were recording unbroken (a motion gap ends a
+stretch too). Motion is whole mg already, clipped to +-16000.
+
 --uv writes whole microvolts (ECG_uV) instead of mV, clipped to +-10000 uV, and prints the
 csv_mc_int --range for it (the H10 measures in uV, so nothing is lost).
 Other options: --device <part of the strap's name>, --out DIR, --data-dir DIR. Standard library only.
 """
 import argparse
 import array
+import bisect
 import csv
 import datetime as dt
 import heapq
@@ -135,6 +142,72 @@ def resample(vals, i0, i1, t0, t1, hz, method):
     return out
 
 
+ACC_HZ = 200
+ACC_LIMIT = 16_000
+
+
+def acc_files(root, start, end, device=None):
+    recs = [r for r in b.recordings(root, start, end, include={"acc"}) if r.stream == "acc"]
+    if device:
+        recs = [r for r in recs if device.lower() in r.device.lower()]
+    return recs
+
+
+def read_acc(path, start, end):
+    """(t_ms, x, y, z) in mg from one recording, in range."""
+    with open(path, newline="", errors="replace") as f:
+        rd = csv.reader(b.clean_lines(f))
+        head = [h.strip() for h in (next(rd, None) or [])]
+        try:
+            cx, cy, cz = head.index("X_mg"), head.index("Y_mg"), head.index("Z_mg")
+        except ValueError:
+            return
+        for row in rd:
+            try:
+                t = b.to_ms(row[0])
+                x, y, z = float(row[cx]), float(row[cy]), float(row[cz])
+            except (ValueError, IndexError):
+                continue
+            if start <= t <= end:
+                yield t, x, y, z
+
+
+class Motion:
+    """The accelerometer on one clock: per unbroken stretch, sample times from position (like the ECG),
+    and linear interpolation at any moment inside a stretch; None outside one."""
+
+    def __init__(self, paths, start, end):
+        half = 0.5 * 1000.0 / ACC_HZ
+        ts, self.x, self.y, self.z = array.array("q"), array.array("d"), array.array("d"), array.array("d")
+        last = None
+        for t, x, y, z in heapq.merge(*(read_acc(p, start, end) for p in paths), key=lambda r: r[0]):
+            if last is not None and t - last < half:
+                continue                                   # the same strap recorded twice
+            last = t
+            ts.append(t); self.x.append(x); self.y.append(y); self.z.append(z)
+        self.raw_ts = ts
+        self.t = array.array("d", [0.0] * len(ts))         # corrected times
+        self.run = array.array("l", [0] * len(ts))         # stretch number of each sample
+        for n, (i0, i1) in enumerate(stretches(ts, 1000.0 / ACC_HZ)):
+            step = (ts[i1] - ts[i0]) / (i1 - i0) if i1 > i0 else 0.0
+            for i in range(i0, i1 + 1):
+                self.t[i] = ts[i0] + (i - i0) * step
+                self.run[i] = n
+
+    def __len__(self):
+        return len(self.t)
+
+    def at(self, t):
+        j = bisect.bisect_right(self.t, t) - 1
+        if j < 0 or j + 1 >= len(self.t) or self.run[j] != self.run[j + 1]:
+            if j >= 0 and self.t[j] == t:
+                return self.x[j], self.y[j], self.z[j]
+            return None
+        f = (t - self.t[j]) / (self.t[j + 1] - self.t[j]) if self.t[j + 1] > self.t[j] else 0.0
+        lerp = lambda a: a[j] + (a[j + 1] - a[j]) * f
+        return lerp(self.x), lerp(self.y), lerp(self.z)
+
+
 def fmt_mv(v):
     s = f"{v:.4f}".rstrip("0").rstrip(".")
     return "0" if s in ("-0", "") else s
@@ -149,6 +222,7 @@ def main():
     ap.add_argument("--hz", type=float, default=200.0, help="rate of the resampled file (default 200)")
     ap.add_argument("--method", choices=["linear", "cubic"], default="linear")
     ap.add_argument("--uv", action="store_true", help="whole microvolts instead of mV (csv_mc_int)")
+    ap.add_argument("--with-acc", action="store_true", help="add the strap's motion (X/Y/Z mg) on the same rows")
     ap.add_argument("--split", action="store_true", help="one 200 Hz file per unbroken stretch")
     ap.add_argument("--min-stretch", type=span_arg, default=10_000, help="leave out shorter stretches (default 10s)")
     ap.add_argument("--device", help="only the strap whose name contains this")
@@ -190,7 +264,14 @@ def main():
     if len(ts) < 2:
         sys.exit("No ECG samples in that range.")
 
-    name = f"bio-dash_{b.clean_name(tag)}_ecg"
+    motion = None
+    if a.with_acc:
+        arecs = acc_files(root, start, end, a.device)
+        motion = Motion([r.path for r in arecs], start, end)
+        if len(motion) < 2:
+            sys.exit("No motion (accelerometer) recordings in that range: leave out --with-acc, or pick another day.")
+
+    name = f"bio-dash_{b.clean_name(tag)}_ecg" + ("_acc" if motion else "")
     out = a.out or os.path.join(root, "Exports", name)
     os.makedirs(out, exist_ok=True)
     unit = "uV" if a.uv else "mV"
@@ -203,14 +284,26 @@ def main():
         for t, v in zip(ts, vals):
             f.write(f"{t},{conv(v)}\n")
 
+    acc_raw_path = None
+    if motion:
+        acc_raw_path = os.path.join(out, f"{name}_acc_raw.csv")
+        clip = lambda v: str(max(-ACC_LIMIT, min(ACC_LIMIT, int(round(v)))))
+        with open(acc_raw_path, "w") as f:
+            f.write("Timestamp_Epoch_ms,X_mg,Y_mg,Z_mg\n")
+            for t, x, y, z in zip(motion.raw_ts, motion.x, motion.y, motion.z):
+                f.write(f"{t},{clip(x)},{clip(y)},{clip(z)}\n")
+
     # 2) even 200 Hz, no timestamps, stretch by stretch
     period = 1000.0 / NOMINAL_HZ
     runs = stretches(ts, period)
     kept, skipped_ms, rows = [], 0, 0
     tag_hz = f"{a.hz:g}hz"
     single = None if a.split else open(os.path.join(out, f"{name}_{tag_hz}.csv"), "w")
+    header = f"ECG_{unit}" + (",ACC_X_mg,ACC_Y_mg,ACC_Z_mg" if motion else "")
     if single:
-        single.write(f"ECG_{unit}\n")
+        single.write(header + "\n")
+    mg = lambda v: str(max(-ACC_LIMIT, min(ACC_LIMIT, int(round(v)))))
+    last_end = None
     try:
         for i0, i1 in runs:
             dur = ts[i1] - ts[i0]
@@ -220,17 +313,42 @@ def main():
             res = resample(vals, i0, i1, ts[i0], ts[i1], a.hz, a.method)
             if not res:
                 continue
-            gap = (ts[i0] - ts[kept[-1]["i1"]]) / 1000 if kept else None
-            st = {"i1": i1, "row": rows, "rows": len(res), "start": ts[i0], "gap": gap,
-                  "hz_in": (i1 - i0) / (dur / 1000) if dur else None}
-            if single:
-                single.write("\n".join(conv(v) for v in res) + "\n")
+            step = 1000.0 / a.hz
+            # pieces: the whole stretch, or (with motion) the runs of it where motion is unbroken too
+            pieces = []
+            if motion:
+                cur = []
+                for k, v in enumerate(res):
+                    m = motion.at(ts[i0] + k * step)
+                    if m is None:
+                        if cur:
+                            pieces.append(cur)
+                        cur = []
+                    else:
+                        cur.append((k, v, m))
+                if cur:
+                    pieces.append(cur)
             else:
-                st["file"] = f"{name}_{tag_hz}_{len(kept) + 1:03d}.csv"
-                with open(os.path.join(out, st["file"]), "w") as f:
-                    f.write(f"ECG_{unit}\n" + "\n".join(conv(v) for v in res) + "\n")
-            rows += len(res)
-            kept.append(st)
+                pieces = [[(k, v, None) for k, v in enumerate(res)]]
+            for piece in pieces:
+                if len(piece) * step < a.min_stretch:
+                    skipped_ms += len(piece) * step
+                    continue
+                t_start = ts[i0] + piece[0][0] * step
+                lines = [conv(v) + ("" if m is None else f",{mg(m[0])},{mg(m[1])},{mg(m[2])}") for _, v, m in piece]
+                st = {"row": rows, "rows": len(lines), "start": int(round(t_start)),
+                      "gap": None if last_end is None else (t_start - last_end) / 1000,
+                      "hz_in": (i1 - i0) / (dur / 1000) if dur else None}
+                # where this piece really ended: the last recorded ECG sample when it runs to the stretch's end
+                last_end = ts[i1] if piece[-1][0] == len(res) - 1 else ts[i0] + piece[-1][0] * step
+                if single:
+                    single.write("\n".join(lines) + "\n")
+                else:
+                    st["file"] = f"{name}_{tag_hz}_{len(kept) + 1:03d}.csv"
+                    with open(os.path.join(out, st["file"]), "w") as f:
+                        f.write(header + "\n" + "\n".join(lines) + "\n")
+                rows += len(lines)
+                kept.append(st)
     finally:
         if single:
             single.close()
@@ -250,6 +368,8 @@ def main():
     kept_s = sum(st["rows"] for st in kept) / a.hz
     print(f"{len(ts):,} samples from {len(recs)} recording(s), {when(ts[0])} -> {when(ts[-1])}")
     print(f"  {raw_path}")
+    if motion:
+        print(f"  {acc_raw_path}  ({len(motion):,} motion samples)")
     print(f"  {len(kept):,} unbroken stretch(es) at {a.hz:g} Hz ({a.method}): {rows:,} rows, "
           f"{kept_s / 3600:.2f} h of the {span_s / 3600:.2f} h span"
           + (f"; {len(runs) - len(kept)} shorter than {a.min_stretch / 1000:g} s left out ({skipped_ms / 1000:.0f} s)"
@@ -261,7 +381,9 @@ def main():
     print(f"  {os.path.join(out, name + '_' + tag_hz + ('_NNN.csv' if a.split else '.csv'))}"
           f"  +  {name}_{tag_hz}_stretches.csv")
     if a.uv:
-        print(f"\ncsv_mc_int:  data/csv_mc_int/get_dataset.sh {name}_{tag_hz}.csv --range ECG_uV:-{UV_LIMIT}:{UV_LIMIT}")
+        acc_r = (f" --range ACC_X_mg:-{ACC_LIMIT}:{ACC_LIMIT} --range ACC_Y_mg:-{ACC_LIMIT}:{ACC_LIMIT}"
+                 f" --range ACC_Z_mg:-{ACC_LIMIT}:{ACC_LIMIT}") if motion else ""
+        print(f"\ncsv_mc_int:  data/csv_mc_int/get_dataset.sh {name}_{tag_hz}.csv --range ECG_uV:-{UV_LIMIT}:{UV_LIMIT}{acc_r}")
 
 
 if __name__ == "__main__":

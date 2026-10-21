@@ -298,7 +298,7 @@ async function renderDevices(st) {
     lastListKey = key;
     list.innerHTML = shown.length ? shown.map(d => `
         <div class="bg-slate-700/50 p-4 rounded-xl border ${d.bottle ? 'border-cyan-500/40' : 'border-slate-600'} flex flex-col gap-3">
-            <div><div class="font-bold text-slate-200">${esc(d.name)} ${d.bottle ? '<span class="text-xs text-cyan-300">· HidrateSpark</span>' : ''}</div>
+            <div><div class="font-bold text-slate-200">${esc(d.name)}${window.Nick ? Nick.tag(d.name, d.address) : ''} ${d.bottle ? '<span class="text-xs text-cyan-300">· HidrateSpark</span>' : ''}</div>
                  <div class="text-xs text-slate-400 font-mono">${esc(d.address)} · ${esc(d.rssi)} dBm</div>
                  ${(d.services || []).length || (d.mfr || []).length ? `<div class="text-[11px] text-slate-500 font-mono mt-1">${(d.services || []).length ? 'svc ' + esc(d.services.join(' ')) : ''}${(d.mfr || []).length ? ' · mfr ' + esc(d.mfr.join(' ')) : ''}</div>` : ''}</div>
             <button data-mac="${esc(d.address)}" class="bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold py-2 rounded transition-colors">Connect</button>

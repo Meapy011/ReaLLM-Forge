@@ -475,7 +475,9 @@ flowchart LR
 ### Just the ECG (`tools/export_ecg.py`), step by step
 
 The raw file keeps every sample as recorded; the 200 Hz file is resampled stretch by stretch and
-never across a gap.
+never across a gap. With `--with-acc` the accelerometer (`_acc.csv`, X/Y/Z mg, 200 Hz) goes through
+the same steps 1-3 on its own clock, is interpolated at each 200 Hz ECG row's time and added as
+`ACC_X_mg,ACC_Y_mg,ACC_Z_mg`; a row with no unbroken motion either side ends the stretch there.
 
 ```mermaid
 flowchart TB

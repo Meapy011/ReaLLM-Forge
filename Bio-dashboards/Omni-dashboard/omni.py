@@ -18,6 +18,7 @@ from polar_python import PolarDevice
 from importlib.metadata import version as _pkg_version
 
 import bt_debug
+from stream_clock import ClockAnchor, StreamClock
 
 # ==========================================
 # 1. CONFIGURATION & GLOBAL STATE
@@ -81,43 +82,12 @@ class SampleRing:
         with self._lock:
             return self._seq
 
-class StreamClock:
-    """Sensor-clock -> wall-clock mapping for PMD frames (timestamp = last sample).
-    Gives jitter-free sample spacing; re-anchors if drift exceeds 1 s."""
-    def __init__(self, hz):
-        self.period_ms = 1000.0 / hz
-        self.offset_ms = None
-        self.prev_last_ms = None
-        self.dropped = 0          # samples missing between frames (from sensor timestamps)
-        self.last_frame_len = 0
-
-    def reset(self):
-        self.offset_ms = None
-        self.prev_last_ms = None
-        self.dropped = 0
-
-    def stamps(self, sensor_ts_ns, n):
-        now_ms = time.time() * 1000.0
-        self.last_frame_len = n
-        if sensor_ts_ns:
-            last_ms = sensor_ts_ns / 1e6
-            if self.prev_last_ms is not None:
-                gap = (last_ms - self.prev_last_ms) - n * self.period_ms
-                if gap > 1.5 * self.period_ms:
-                    self.dropped += round(gap / self.period_ms)
-            self.prev_last_ms = last_ms
-            if self.offset_ms is None or abs(last_ms + self.offset_ms - now_ms) > 1000.0:
-                self.offset_ms = now_ms - last_ms
-            end_ms = last_ms + self.offset_ms
-        else:
-            end_ms = now_ms
-        return [int(end_ms - (n - 1 - i) * self.period_ms) for i in range(n)]
-
 ecg_ring = SampleRing(ECG_HZ * 10)   # [ts_ms, mV]
 acc_ring = SampleRing(ACC_HZ * 10)   # [ts_ms, x, y, z]
 rr_ring = SampleRing(200)            # [ts_ms, rr_ms] -- one entry per beat
-ecg_clock = StreamClock(ECG_HZ)
-acc_clock = StreamClock(ACC_HZ)
+h10_clock = ClockAnchor()   # ECG and accelerometer share the strap's clock
+ecg_clock = StreamClock(ECG_HZ, h10_clock)
+acc_clock = StreamClock(ACC_HZ, h10_clock)
 
 # Shared Memory Matrix (scalars only; waveform data lives in the rings above)
 omni_state = {
@@ -340,7 +310,9 @@ def debug_info():
                             "ecg_frames_per_s": round(meters["ecg_frames"].rate(), 2),
                             "ecg_samples_per_frame": ecg_clock.last_frame_len,
                             "hr_notifications_per_s": round(meters["hr"].rate(), 2),
-                            "ecg_dropped": ecg_clock.dropped, "acc_dropped": acc_clock.dropped}},
+                            "ecg_dropped": ecg_clock.dropped, "acc_dropped": acc_clock.dropped,
+                            "acc_hz_measured": round(acc_clock.measured_hz, 2),
+                            "clock_reanchors": h10_clock.reanchors}},
         "viatom": {**v, "state": omni_state["viatom"]["status"], "link_failures": link_failures["viatom"],
                    "counters": viatom_counters, "nominal": {"readings_per_s": 0.5},
                    "rates": {"readings_per_s": round(viatom_meters["readings"].rate(), 2),
@@ -759,6 +731,16 @@ def system_restart():
     if request.method == "GET":
         return jsonify(bt_debug.restart_info(host))
     code, out = bt_debug.system_restart(request.get_json(silent=True) or {}, host, request.headers.get(bt_debug.POWER_HEADER))
+    return jsonify(out), code
+
+
+# ---------- names you give devices ("Mine", "Boss's"), shared by every dashboard ----------
+@app.route("/api/device-names", methods=["GET", "POST"])
+def device_names_api():
+    if request.method == "GET":
+        return jsonify({"names": bt_debug.device_names()})
+    body = request.get_json(silent=True) or {}
+    code, out = bt_debug.set_device_name(body.get("key"), body.get("name"))
     return jsonify(out), code
 
 

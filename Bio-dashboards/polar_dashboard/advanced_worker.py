@@ -13,6 +13,7 @@ from bleak import BleakScanner
 from polar_python import PolarDevice
 
 import bt_debug
+from stream_clock import ClockAnchor, StreamClock
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,50 +58,9 @@ last_heartbeat = 0.0
 ble_device_cache = {}
 
 
-class StreamClock:
-    """Maps sensor-side PMD timestamps onto wall-clock epoch ms.
-
-    The H10 stamps every PMD frame with the time of its LAST sample, but its
-    clock usually isn't set to real time. We lock a fixed offset between the
-    sensor clock and wall clock on the first frame, so sample spacing comes from
-    the sensor (no BLE delivery jitter) while absolute time stays wall-clock.
-    Re-anchors if the two drift apart by more than a second.
-    """
-
-    def __init__(self, hz):
-        self.period_ms = 1000.0 / hz
-        self.offset_ms = None
-        self.prev_last_ms = None
-        self.dropped = 0          # samples missing between frames (from sensor timestamps)
-        self.last_frame_len = 0
-
-    def reset(self):
-        self.offset_ms = None
-        self.prev_last_ms = None
-        self.dropped = 0
-
-    def stamps(self, sensor_ts_ns, n):
-        now_ms = time.time() * 1000.0
-        self.last_frame_len = n
-        if sensor_ts_ns:
-            last_ms = sensor_ts_ns / 1e6
-            if self.prev_last_ms is not None:
-                # frames should abut exactly; anything beyond ~1.5 periods is lost samples
-                gap = (last_ms - self.prev_last_ms) - n * self.period_ms
-                if gap > 1.5 * self.period_ms:
-                    self.dropped += round(gap / self.period_ms)
-            self.prev_last_ms = last_ms
-            if self.offset_ms is None or abs(last_ms + self.offset_ms - now_ms) > 1000.0:
-                self.offset_ms = now_ms - last_ms
-            end_ms = last_ms + self.offset_ms
-        else:
-            end_ms = now_ms  # library didn't give a timestamp; fall back to arrival time
-        p = self.period_ms
-        return [int(end_ms - (n - 1 - i) * p) for i in range(n)]
-
-
-ecg_clock = StreamClock(ECG_HZ)
-acc_clock = StreamClock(ACC_HZ)
+h10_clock = ClockAnchor()   # ECG and accelerometer share the strap's clock
+ecg_clock = StreamClock(ECG_HZ, h10_clock)
+acc_clock = StreamClock(ACC_HZ, h10_clock)
 
 # --- Debug telemetry (shown in the dashboard's debug panel) ---
 meters = {k: bt_debug.RateMeter() for k in ("ecg", "acc", "ecg_frames", "acc_frames", "hr", "rr")}
@@ -135,6 +95,8 @@ def refresh_rates():
         "rr_per_min": round(meters["rr"].rate() * 60, 1),
         "ecg_dropped": ecg_clock.dropped,
         "acc_dropped": acc_clock.dropped,
+        "acc_hz_measured": round(acc_clock.measured_hz, 2),
+        "clock_reanchors": h10_clock.reanchors,
     }
 
 

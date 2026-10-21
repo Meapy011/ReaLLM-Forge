@@ -28,12 +28,43 @@ echo "[WEB] Launching dashboard interface web server (app.py)..."
 python3 app.py &
 WEB_PID=$!
 
+# 4. The live forecast service (optional): ECG / accelerometer forecasts for the 🔮 Forecast pills.
+#    It needs PyTorch + transformers and the model folders in forecast/models (see forecast/README.md);
+#    without them the page says so and everything else runs as before. BIODASH_FORECAST=0 leaves it off;
+#    BIODASH_FORECAST_PYTHON picks the Python that has torch; otherwise the one tools/orin_setup.sh made
+#    (~/.local/share/bio-dash/forecast-venv), if it's there, or python3.
+FORECAST_PID=""
+if [ "${BIODASH_FORECAST:-1}" != "0" ]; then
+    FC_PY="${BIODASH_FORECAST_PYTHON:-}"
+    _FC_VENV="${BIODASH_FORECAST_VENV:-$HOME/.local/share/bio-dash/forecast-venv}"
+    [ -z "$FC_PY" ] && [ -x "$_FC_VENV/bin/python" ] && FC_PY="$_FC_VENV/bin/python"
+    FC_PY="${FC_PY:-python3}"
+    echo "[AI] Launching forecast service (forecast_service.py with $FC_PY)..."
+    # Restarted if it ever stops. The loop itself never ends, so the service can't stop the dashboard (wait -n).
+    ( while true; do "$FC_PY" forecast_service.py; echo "[AI] forecast service stopped (exit $?); restarting in 10 s"; sleep 10; done ) &
+    FORECAST_PID=$!
+fi
+
+stop_forecast() {
+    [ -n "$FORECAST_PID" ] || return 0
+    local kids
+    kids=$(pgrep -P "$FORECAST_PID" 2>/dev/null)
+    kill "$FORECAST_PID" 2>/dev/null
+    [ -n "$kids" ] && kill $kids 2>/dev/null
+    FORECAST_PID=""
+}
+
 # Trap Ctrl+C (SIGINT) and exit signals to kill both background jobs cleanly
 cleanup() {
     echo -e "\n\n============================================="
     echo "   Shutting down Polar H10 Lab...            "
     echo "============================================="
     
+    if [ -n "$FORECAST_PID" ]; then
+        echo "[AI] Stopping forecast service..."
+        stop_forecast
+    fi
+
     echo "[WEB] Stopping web server (PID: $WEB_PID)..."
     kill $WEB_PID 2>/dev/null
     
@@ -59,5 +90,6 @@ wait -n
 code=$?
 echo "❌ A dashboard process stopped unexpectedly (exit $code)."
 echo "   If the lines above say \"No module named ...\", run ./setup_env.sh in the release folder (each release has its own .venv)."
+stop_forecast
 kill $(jobs -p) 2>/dev/null
 exit 1

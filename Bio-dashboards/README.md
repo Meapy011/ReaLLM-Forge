@@ -422,7 +422,7 @@ A patch never moves you to a new version, and each action needs a second tap to 
 Each patch lists its **patch notes** under its title (from the release's `PATCH_NOTES.md`, which the push script writes into the commit), so you can see what it changes before applying it.
 
 - **Needs a git clone**, not an unzipped copy: `git clone https://github.com/Meapy011/Bio-dash`
-  and run the dashboards from the newest release folder (`Bio-dash/V5.3_Dashboard`).
+  and run the dashboards from the newest release folder (`Bio-dash/V5.5_Dashboard`).
 - **Only fast-forwards from the clone's own remote.** It refuses if tracked files were edited
   locally or the branch has diverged, and says which files; nothing of yours is overwritten.
 - **Recordings and settings are safe.** Recordings live in `Documents/Bio-dash`; saved settings
@@ -583,12 +583,14 @@ Then train and sample with ReaLLM-Forge's demo:
 python3 tools/export_ecg.py 2026-10-07                    # one day
 python3 tools/export_ecg.py --from "2026-10-07 22:00" --to "2026-10-08 07:00" --method cubic
 python3 tools/export_ecg.py 2026-10-07 --uv               # whole microvolts, for ReaLLM-Forge csv_mc_int
+python3 tools/export_ecg.py 2026-10-07 --uv --with-acc    # plus the strap's motion on the same rows
 ```
 
 | File | |
 |---|---|
 | `<name>_raw.csv` | `Timestamp_Epoch_ms,ECG_mV`: every sample as recorded (130 Hz), nothing changed. Polar-dash and Omni recordings merged in time order, the same strap's duplicate samples dropped |
 | `<name>_200hz.csv` | `ECG_mV` only, no timestamp: an even 200 Hz, interpolated, so row k is k/200 s into its stretch |
+| `<name>_acc_raw.csv` | with `--with-acc`: `Timestamp_Epoch_ms,X_mg,Y_mg,Z_mg`, the H10's accelerometer as recorded (200 Hz) |
 | `<name>_200hz_stretches.csv` | where each unbroken stretch starts in the 200 Hz file, its start time and the gap before it |
 
 - **Stretches:** a gap of more than 3 samples (~23 ms) ends one. Nothing is invented across a gap;
@@ -598,8 +600,23 @@ python3 tools/export_ecg.py 2026-10-07 --uv               # whole microvolts, fo
   whole milliseconds, so each sample's time comes from its position in the stretch (at the
   stretch's measured rate), then `--method linear` (default) or `cubic` (Catmull-Rom; about three
   times closer on a sharp QRS spike) gives 200 Hz. `--hz` for another rate.
+- **ECG + motion (`--with-acc`):** the 200 Hz file gets `ACC_X_mg,ACC_Y_mg,ACC_Z_mg` next to the
+  ECG, row for row: the accelerometer's times are corrected the same way, then it's interpolated
+  (linear) at each ECG row's moment. Rows are kept only where both were recording, so a motion gap
+  ends a stretch too. Motion is whole mg, clipped to ±16000; with `--uv` the printed
+  `get_dataset.sh` line has the ranges for all four columns. Files are named `..._ecg_acc_...`.
 - `--uv`: whole microvolts (what the H10 measures, so nothing is lost), clipped to ±10000 µV, with
   the `--range` for csv_mc_int printed.
+
+## Naming your devices
+
+When more than one strap, ring, monitor or bottle is around (yours, a colleague's), click the
+🏷 tag next to a device, in the scanner list, the auto-reconnect bar or beside the status pill,
+and give it a name: "Mine", "Boss's", "Spare". The name shows wherever that dashboard lists the
+device, on every dashboard. It's kept by the name the device advertises (`Polar H10 0A1B2C3D`,
+`O2Ring 4F21`, the bottle's name), or its address when it has none, in
+`~/.config/bio-dash/device_names.json` on this computer (it carries across upgrades; copy the file
+to name them on another computer too). Recordings and their folders keep the device's own name.
 
 ## Restart everything
 
@@ -667,6 +684,41 @@ them here, and can push them to a cloud. Nothing is installed on the other machi
   water are small. `--every 10min`, `--full-every 6h`, `--skip ""` (everything every time) change
   that; `schedule --off` stops it. Run `sudo loginctl enable-linger $USER` once so it keeps going
   when you're logged out, and run `schedule` again from the new folder after an upgrade.
+
+## Live forecasts (Polar-dash)
+
+The **🔮 Forecast** pills on Polar-dash's ECG and accelerometer cards show the next second predicted
+by the H10 models: a band (8 sampled futures) and a dashed line ahead of the live trace, with the
+running error beside the "repeat the last value" baseline. A research demo, not a medical device.
+
+- **Needs the models and PyTorch.** Copy `polar_dashboard/forecast/models/{ecg,ecg_acc}` from the
+  shared zip (the weights stay out of git), and install torch in Polar's `.venv`. Without them the
+  pills say so and the dashboard runs as before. On a Jetson Orin, `tools/orin_setup.sh` does it.
+- **`forecast_service.py`** runs beside `app.py` (`run_dashboard.sh` starts it); `--bench` times it.
+- **Testing without the strap:** `polar_dashboard/replay_session.py` plays a recording back. It
+  writes to a test folder (`BIODASH_DATA_DIR`), never into your recordings unless told to.
+- **Datasets:** `tools/export_waves.py` writes the same 125 Hz rows for ReaLLM-Forge.
+
+Full details: `polar_dashboard/forecast/README.md`.
+
+## Which radio hears better: `tools/radio_compare.py`
+
+Compares two Bluetooth dongles (stock vs one with an antenna, a new one vs the old one) on the
+devices around you: how strong each one hears them and how many adverts it catches. The fair way is
+one dongle at a time in the same port, alternating, then `--report`:
+
+```bash
+./restart_all.py --stop --no-bluetooth                     # Bio-dash off while measuring
+python3 tools/radio_compare.py                              # list the radios (note the end of each address)
+python3 tools/radio_compare.py 12:38 --label stock   --seconds 90 --results run.json
+python3 tools/radio_compare.py 10:21 --label antenna --seconds 90 --results run.json   # swapped into the same port
+# ... two or three rounds each ...
+python3 tools/radio_compare.py --report --results run.json
+./restart_all.py                                            # Bio-dash back on
+```
+
+Both at once (`radio_compare.py hci1 hci2 --labels stock antenna`) is quicker but measures the
+ports as much as the dongles. Tips and how to read the numbers are at the top of the file.
 
 ## What's around: a standalone Bluetooth scanner
 

@@ -663,3 +663,49 @@ def system_restart(options, client_host, header_value):
                      cwd=os.path.dirname(RESTARTER))
     return 200, {"ok": True, "started": started, "dry_run": "--dry-run" in args}
 
+# ---------------------------------------------------------------------------
+# Device names you choose ("Mine", "Boss's H10"), shared by every dashboard and release
+# ---------------------------------------------------------------------------
+# Kept in ~/.config/bio-dash/device_names.json, keyed by the name the device advertises (stable:
+# "Polar H10 0A1B2C3D", "O2Ring 4F21", a bottle's name; its address can change), or by its address
+# when it has no name. Recordings and their folders are not renamed; this is only what you see.
+DEVICE_NAMES_FILE = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config"),
+                                 "bio-dash", "device_names.json")
+
+
+def device_key(name, address=None):
+    name = (name or "").strip()
+    if name and name not in ("(no name)", "unknown device") and name.upper() != (address or "").upper():
+        return name
+    return (address or "").strip().upper()
+
+
+def device_names():
+    try:
+        with open(DEVICE_NAMES_FILE) as f:
+            data = json.load(f)
+        return {str(k): str(v) for k, v in data.items() if v} if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def set_device_name(key, nickname):
+    """(http_status, json): set or (empty nickname) clear the name you gave a device."""
+    key = str(key or "").strip()[:120]
+    nickname = " ".join(str(nickname or "").split())[:40]
+    if not key:
+        return 400, {"error": "which device?"}
+    names = device_names()
+    if nickname:
+        names[key] = nickname
+    else:
+        names.pop(key, None)
+    try:
+        os.makedirs(os.path.dirname(DEVICE_NAMES_FILE), exist_ok=True)
+        tmp = DEVICE_NAMES_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(names, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, DEVICE_NAMES_FILE)
+    except OSError as e:
+        return 500, {"error": f"couldn't save: {e}"}
+    return 200, {"names": names}

@@ -76,5 +76,32 @@ for extra in ([], ["--uv"]):
         vals = [float(v) for v in hz[1:]]
         worst = max(abs(vals[k] - tone(k * 5)) for k in range(11999))
         check("200 Hz follows the tone", worst < 0.01, True)
+# --with-acc: motion at 200 Hz with a 2 s hole at 30-32 s; the first ECG stretch splits around it
+acc = os.path.join(data, "Polar H10", "Polar H10 0A1B2C3D", "2026-10-07", "09-00-00_acc.csv")
+wave = lambda ms: 1000 * math.sin(2 * math.pi * 0.5 * ms / 1000)
+with open(acc, "w") as f:
+    f.write("Timestamp_Epoch_ms,X_mg,Y_mg,Z_mg\n")
+    for s0, s1 in ((0, 30000), (32000, 125000)):
+        for i in range((s1 - s0) // 5):
+            ms = s0 + i * 5
+            f.write(f"{t0 + ms},{wave(ms):.0f},-3,{981 + (i % 2)}\n")
+out = os.path.join(T, "out_acc")
+p = subprocess.run([sys.executable, os.path.join(HERE, "export_ecg.py"), "2026-10-07", "--data-dir", data, "--out", out,
+                    "--with-acc", "--uv"], capture_output=True, text=True)
+check("--with-acc runs", (p.returncode, p.stderr), (0, ""))
+base = os.path.join(out, "bio-dash_2026-10-07_ecg_acc")
+araw = list(csv.reader(open(base + "_acc_raw.csv")))
+check("motion raw: timestamp + X/Y/Z", araw[0], ["Timestamp_Epoch_ms", "X_mg", "Y_mg", "Z_mg"])
+check("motion raw: every sample", len(araw) - 1, (30000 + 93000) // 5)
+rows = list(csv.reader(open(base + "_200hz.csv")))
+check("200 Hz: ECG + motion columns", rows[0], ["ECG_uV", "ACC_X_mg", "ACC_Y_mg", "ACC_Z_mg"])
+check("all integers, no blanks", all(len(r) == 4 and all(c.lstrip("-").isdigit() for c in r) for r in rows[1:]), True)
+st = list(csv.DictReader(open(base + "_200hz_stretches.csv")))
+check("three stretches: 0-30 s, 32-60 s, 62-122 s", [round(int(s["rows"]) / 200) for s in st], [30, 28, 60])
+check("motion lines up with the ECG rows", max(abs(int(r[1]) - wave(k * 5)) for k, r in enumerate(rows[1:6000])) <= 1, True)
+check("csv_mc_int ranges printed for motion", "--range ACC_Z_mg:-16000:16000" in p.stdout, True)
+p = subprocess.run([sys.executable, os.path.join(HERE, "export_ecg.py"), "2026-10-08", "--data-dir", data, "--out", out,
+                    "--with-acc"], capture_output=True, text=True)
+check("no motion that day: says so", p.returncode != 0, True)
 shutil.rmtree(T)
 print(f"{ok} checks passed")

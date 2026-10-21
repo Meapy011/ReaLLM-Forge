@@ -152,5 +152,15 @@ def system_restart():
     return jsonify(out), code
 
 
+# ---------- names you give devices ("Mine", "Boss's"), shared by every dashboard ----------
+@app.route("/api/device-names", methods=["GET", "POST"])
+def device_names_api():
+    if request.method == "GET":
+        return jsonify({"names": bt_debug.device_names()})
+    body = request.get_json(silent=True) or {}
+    code, out = bt_debug.set_device_name(body.get("key"), body.get("name"))
+    return jsonify(out), code
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5003, debug=False, threaded=True)   # 5000 is Omni

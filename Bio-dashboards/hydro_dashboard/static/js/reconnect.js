@@ -15,7 +15,7 @@
     const BTN = 'px-3 py-1 rounded-full text-xs font-semibold border bg-slate-700/50 text-slate-300 border-slate-600 hover:bg-slate-700 hover:text-white transition-colors';
 
     function line(role, d) {
-        const name = esc(d.name || d.address);
+        const name = esc(d.name || d.address) + '</b>' + (window.Nick ? Nick.tag(d.name, d.address) : '') + '<b>';
         const addr = d.transport === 'tcp' ? '' : ` <span class="font-mono text-slate-500 text-xs">${esc(d.address)}</span>`;
         const text = !d.auto
             ? `<span class="text-slate-400">Last device: <b class="text-slate-200">${name}</b>${addr} · auto-reconnect off</span>`
