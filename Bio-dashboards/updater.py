@@ -156,8 +156,10 @@ def unit_dir():
 
 def installed_units():
     try:
+        # not biodash-update (this updater) or biodash-push* (tools/fleet.py's scheduled uploads): not dashboards
         return sorted(f[len("biodash-"):-len(".service")] for f in os.listdir(unit_dir())
-                      if f.startswith("biodash-") and f.endswith(".service") and not f.startswith("biodash-update"))
+                      if f.startswith("biodash-") and f.endswith(".service")
+                      and not f.startswith(("biodash-update", "biodash-push")))
     except OSError:
         return []
 
@@ -307,12 +309,14 @@ def do_patch():
 
 
 def copy_settings(old_abs, new_abs, log):
-    """Settings the dashboards saved next to their code (untracked *.json), minus scratch files."""
+    """Settings the dashboards saved next to their code (untracked *.json), minus scratch files, and the
+    forecast model weights (untracked; hard-linked when they can be)."""
     copied = 0
     for root, dirs, files in os.walk(old_abs):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for name in files:
-            if not name.endswith(".json") or VOLATILE.match(name):
+            weights = name in ("model.safetensors", "pytorch_model.bin")   # forecast models: out of git, ~50 MB each
+            if not weights and (not name.endswith(".json") or VOLATILE.match(name)):
                 continue
             src = os.path.join(root, name)
             rel = os.path.relpath(src, old_abs)
@@ -320,7 +324,13 @@ def copy_settings(old_abs, new_abs, log):
                 continue                                         # part of the release, not a setting
             dst = os.path.join(new_abs, rel)
             if os.path.isdir(os.path.dirname(dst)) and not os.path.exists(dst):
-                shutil.copy2(src, dst)
+                if weights:
+                    try:
+                        os.link(src, dst)                    # same disk: no second copy
+                    except OSError:
+                        shutil.copy2(src, dst)
+                else:
+                    shutil.copy2(src, dst)
                 copied += 1
     log(f"Copied {copied} settings file(s) to the new version.")
 

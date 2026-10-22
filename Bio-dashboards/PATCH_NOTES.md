@@ -1,4 +1,14 @@
-# V5.5: live ECG and accelerometer forecasts in Polar-dash (🔮 pills on both cards)
+# V5.6: the pen traces over the forecast, an inference strip under the ECG (logged as CSV), and Disconnect
+- GET /api/models and POST /api/forecast: the H10 models on stream-lane-lab's API (ReaLLM-Forge PR #924), for other tools
+- Share link ready: behind tailscale serve, visitors count as other devices, not as this computer
+- Pages and scripts are rechecked on every load, so the browser shows a new version straight after an update (no hard refresh)
+- The forecast stays under the live ECG after the pen passes, so prediction and real beat are on top of each other
+- 🔮 Inference strip under the monitor: what the model forecast for each moment, lined up with the ECG
+- The inference is logged to Documents/Bio-dash/Forecasts/<day>/<time>_forecast_ecg.csv (mV, with how far ahead)
+- ⏏ Disconnect in the header: end the session, then pick this strap or another; auto-reconnect waits for your pick
+- tools/score_forecast.py: scores the forecast model offline on recordings against repeating the last value, as the dashboard runs it and with the ECG's baseline offset removed
+- tools/orin_setup.sh: takes the Hugging Face upload zip, fetches cuDSS / cuSPARSELt when PyTorch needs them, reuses a working system-wide Jetson PyTorch
+- Updates: upgrading to a new version works again when fleet.py's scheduled uploads are installed (they were taken for dashboards)
 - forecast_service.py: the H10 models forecast the next second every 0.5 s, as a band and a dashed line ahead of the trace
 - analysis_dashboard/waves.py and tools/export_waves.py: the 125 Hz rows the models use, live and offline
 - replay_session.py: play a recording back through the dashboard; replays are never mixed into real recordings, exports or uploads

@@ -207,23 +207,28 @@ def _write_devices(targets):
 def set_status(state, address=None, attempt=None):
     """Tells the UI what the worker is doing: scanning | connecting | streaming."""
     _write_json(STATUS_FILE, {"state": state, "address": address, "attempt": attempt,
-                              "last_device": last_device.load(),
+                              "last_device": last_device.load(), "auto_held": auto_held,
                               "max_attempts": CONNECT_ATTEMPTS, "debug": debug})
 
 
 def _read_command():
-    """Returns the MAC the UI asked for (and consumes the command), else None."""
+    """The UI's command (consumed): {"action": "connect", "address": ...} or {"action": "disconnect"}, else None."""
     if not os.path.exists(COMMAND_FILE):
         return None
     try:
         with open(COMMAND_FILE, "r") as f:
             cmd = json.load(f)
         os.remove(COMMAND_FILE)
-        if cmd.get("action") == "connect":
-            return cmd.get("address")
+        if cmd.get("action") in ("connect", "disconnect"):
+            return cmd
     except Exception:
         pass
     return None
+
+
+# After "Disconnect" in the UI, auto-reconnect waits until a device is picked (in this run of the worker)
+auto_held = False
+next_target_mac = None        # a device picked while streaming another: connect to it next
 
 
 async def scan_and_list_devices():
@@ -264,11 +269,14 @@ async def scan_and_list_devices():
     if not cut_short:
         _write_devices(sorted(found_devices.values(), key=lambda x: x["rssi"], reverse=True))
 
-    mac = _read_command()
+    global auto_held
+    cmd = _read_command()
+    mac = cmd.get("address") if cmd and cmd["action"] == "connect" else None
     if mac:
         selected_target_mac = mac
+        auto_held = False
         logging.info(f"UI Command received! Target locked: {selected_target_mac}")
-    else:
+    elif not auto_held:
         # Auto-reconnect: the last device we streamed from is back in range
         last = last_device.target()
         if last and last["address"] in found_devices:
@@ -308,6 +316,17 @@ async def stream_session(device):
             await asyncio.sleep(1)
             refresh_rates()
             set_status("streaming", device.address)  # 1 Hz debug refresh
+            cmd = _read_command()
+            if cmd and cmd["action"] == "disconnect":
+                global auto_held
+                auto_held = True
+                logging.info("Disconnect from the UI: closing the session; pick a device to connect again.")
+                return
+            if cmd and cmd["action"] == "connect" and cmd.get("address") and cmd["address"] != device.address:
+                global next_target_mac
+                next_target_mac = cmd["address"]
+                logging.info(f"Switching to {next_target_mac} (picked in the UI)")
+                return
 
         logging.warning("\nConnection Dropped (Watchdog Timeout). Returning to Scanner...")
 
@@ -364,7 +383,8 @@ async def main():
                     logging.warning(f"\n⚠️ Link error on attempt {attempt}/{CONNECT_ATTEMPTS}: {e!r}")
                     await asyncio.sleep(2)
 
-        selected_target_mac = None
+        global next_target_mac
+        selected_target_mac, next_target_mac = next_target_mac, None      # a device picked meanwhile, else rescan
         debug["connected_at"] = None
         reset_meters()
 

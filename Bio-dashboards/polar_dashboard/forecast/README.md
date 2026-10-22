@@ -1,4 +1,4 @@
-# Live forecasts in Polar-dash (Bio-dash V5.5)
+# Live forecasts in Polar-dash (Bio-dash V5.6)
 
 The **🔮 Forecast** pills on the ECG card and the accelerometer card show the next second, predicted
 by the H10 models, ahead of the live trace:
@@ -9,6 +9,13 @@ by the H10 models, ahead of the live trace:
 - **Status text** next to each pill, for example `1.0 s ahead · 8 samples · 140 ms · error 0.033 mV (hold 0.056)`.
   - The error is the mean |actual − forecast median| over the last 30 s.
   - "hold" is the same error for simply repeating the last value (the baseline to beat).
+
+**V5.6:** what was forecast stays under the live trace after the pen passes (the pen draws the real ECG
+over it), and the 🔮 Inference strip under the monitor shows it alone, on the same time axis. The rule: each
+new forecast keeps the previous one up to its own start. `forecast_service.py` logs exactly that to
+`<Documents>/Bio-dash/Forecasts/<day>/<session time>_forecast_<ecg|acc>[_replay].csv`: `t_ms`, `lead_ms` (from the
+last row of context), then per lane the line drawn (the representative sample), median, lo and hi, in mV / mg
+(raw, not high-passed). `--no-log` / `BIODASH_FORECAST_LOG=0` turns it off.
 
 This is a research demo trained on one person's 7.2 h of H10 data. It is not a medical device.
 

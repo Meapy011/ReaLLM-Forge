@@ -27,7 +27,8 @@ function beep() {
 const monitor = new EcgMonitor({
     grid: document.getElementById('ecgGrid'),
     trace: document.getElementById('ecgTrace'),
-    overlay: document.getElementById('ecgForecast'),     // live forecast, drawn ahead of the pen
+    overlay: document.getElementById('ecgForecast'),     // live forecast: ahead of the pen, then under the trace
+    strip: { grid: document.getElementById('infGrid'), trace: document.getElementById('infTrace') },   // inference strip
     heart: document.getElementById('mon-heart'),
     noSignal: document.getElementById('ecg-nosignal'),
     onBeat: beep,
@@ -74,6 +75,28 @@ const scannerPanel = $('scanner-panel');
 const hrEl = $('hr-val'), ecgEl = $('ecg-val'), rmssdEl = $('rmssd-val'), labelEl = $('stress-label');
 
 const BADGE = 'px-3 py-1 rounded-full text-xs font-semibold border ';
+
+// ⏏ Disconnect (second tap within 3 s confirms): the worker ends the session and waits for a device to be
+// picked in the scanner below -- this strap again, or another one -- instead of reconnecting by itself.
+const disconnectBtn = $('disconnect-btn');
+let disconnectArmed = 0;
+disconnectBtn.addEventListener('click', async () => {
+    if (Date.now() - disconnectArmed > 3000) {
+        disconnectArmed = Date.now();
+        disconnectBtn.textContent = 'Tap again to disconnect';
+        setTimeout(() => { if (Date.now() - disconnectArmed >= 3000) disconnectBtn.textContent = '⏏ Disconnect'; }, 3100);
+        return;
+    }
+    disconnectArmed = 0;
+    disconnectBtn.textContent = '⏏ Disconnect';
+    try {
+        await fetch('/api/disconnect', { method: 'POST' });
+        ignoreDataUntil = Date.now() + 3000;
+        markIdle('Disconnected — pick a device', 'wait');
+    } catch (e) {
+        setStatus('Couldn’t reach the dashboard', 'bad');
+    }
+});
 function setStatus(text, tone) {
     statusEl.textContent = text;
     statusEl.className = BADGE + {
@@ -89,16 +112,21 @@ const STALE_MS = 5000;
 let uiIsConnected = false;
 let lastPacketAt = 0;
 
+let ignoreDataUntil = 0;          // after Disconnect: the last packets in flight don't count as a connection
+
 function markLive() {
+    if (Date.now() < ignoreDataUntil) return;
     lastPacketAt = Date.now();
     if (!uiIsConnected) {
         uiIsConnected = true;
         scannerPanel.style.display = 'none';
+        disconnectBtn.classList.remove('hidden');
         setStatus('Telemetry Active 🟢', 'ok');
     }
 }
 function markIdle(text, tone) {
     uiIsConnected = false;
+    disconnectBtn.classList.add('hidden');
     document.getElementById('mon-hr').textContent = '--';
     scannerPanel.style.display = 'block';
     setStatus(text, tone);

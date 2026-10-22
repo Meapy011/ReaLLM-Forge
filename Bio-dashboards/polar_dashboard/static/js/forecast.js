@@ -217,6 +217,8 @@ class ForecastOverlay {
 
     _render() {
         const svc = this.service || {};
+        const strip = document.getElementById('ecg-inference');     // the inference strip under the monitor
+        if (strip) strip.classList.toggle('hidden', !this.settings.ecg);
         for (const kind of ['ecg', 'acc']) {
             const btn = this.btn[kind], el = this.statusEl[kind];
             const on = this.settings[kind];

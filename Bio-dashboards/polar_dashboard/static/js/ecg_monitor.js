@@ -2,10 +2,11 @@
 // 25 mm/s, auto or fixed gain, R-wave flash + optional beep.
 // Colours are options, so it can follow the dashboard theme.
 //
-//   const mon = new EcgMonitor({ grid, trace, overlay, heart, noSignal, onBeat, theme });
+//   const mon = new EcgMonitor({ grid, trace, overlay, strip, heart, noSignal, onBeat, theme });
 //   mon.push(rows)      // rows = [[ts_ms, mV, hr], ...] straight from the websocket
 //   mon.cycleGain()     // AUTO -> 5 -> 10 -> 20 mm/mV -> AUTO
 //   mon.setForecast(f)  // optional overlay canvas: {t0, dt, rep, lo, hi} (mV on a dt grid from t0) or null
+//                       // strip: optional {grid, trace} canvases for the inference strip
 //
 // Sample timestamps come from the Polar's own clock (evenly spaced). They are
 // replayed at real speed a little behind "now", so the pen moves smoothly even
@@ -14,12 +15,17 @@
 //
 // A forecast is drawn ahead of the pen (dashed representative sample + band), through the same 0.5 Hz
 // high-pass as the trace, so it shows where the pen is about to go; the pen draws the real ECG over it.
+// The overlay canvas sits under the trace, and what was forecast stays there after the pen has passed:
+// when a new forecast arrives, the previous one's points up to the new one's start are kept as the
+// "inference" (the same rule forecast_service.py logs to Forecasts/<day>/<time>_forecast_ecg.csv). The
+// inference strip shows it alone, under the live ECG, on the same time axis.
 
 class EcgMonitor {
-    constructor({ grid, trace, overlay = null, heart, noSignal, onBeat, theme = {} }) {
+    constructor({ grid, trace, overlay = null, strip = null, heart, noSignal, onBeat, theme = {} }) {
         this.grid = grid;
         this.trace = trace;
         this.overlay = overlay;
+        this.strip = strip && strip.grid && strip.trace ? strip : null;
         this.heart = heart;
         this.noSignal = noSignal;
         this.onBeat = onBeat || (() => {});
@@ -53,6 +59,8 @@ class EcgMonitor {
         this.lastSampleAt = 0;
         this.recent = [];           // the last few seconds of [ts, mV], to seed the forecast's filter
         this.fc = null;             // forecast, already high-passed
+        this.inf = [];              // the inference: [{ts, v}] kept from each forecast (high-passed mV)
+        this.infLast = -Infinity;
 
         // Display filter state: 0.5 Hz high-pass removes baseline wander
         this.hpPrevIn = 0;
@@ -65,6 +73,7 @@ class EcgMonitor {
 
         this._resize = this._resize.bind(this);
         new ResizeObserver(this._resize).observe(this.trace.parentElement);
+        if (this.strip) new ResizeObserver(this._resize).observe(this.strip.trace.parentElement);
         this._resize();
         requestAnimationFrame(this._frame.bind(this));
     }
@@ -113,7 +122,7 @@ class EcgMonitor {
     // The forecast through the same high-pass as the trace: the filter starts 2.5 s before the forecast on the
     // real samples (it settles in ~1.5 s), then runs on through each forecast series.
     setForecast(f) {
-        if (!f || !f.rep || f.rep.length < 2) { this.fc = null; return; }
+        if (!f || !f.rep || f.rep.length < 2) { this.fc = null; this.inf = []; this.infLast = -Infinity; return; }
         const hp = (s, ts, mv) => {
             if (s.last === null || ts - s.last > 500) { s.prevIn = mv; s.prevOut = 0; }
             else {
@@ -129,7 +138,16 @@ class EcgMonitor {
             if (ts >= f.t0 - 2500 && ts < f.t0) hp(seed, ts, mv);
         }
         const run = (vals) => { const s = { ...seed }; return vals.map((v, k) => hp(s, f.t0 + k * f.dt, v)); };
+        const old = this.fc;
         this.fc = { t0: f.t0, dt: f.dt, n: f.rep.length, rep: run(f.rep), lo: run(f.lo), hi: run(f.hi) };
+        // keep the previous forecast up to where this one starts (its index 0 is the last real row, so skipped)
+        if (old && f.t0 - old.t0 <= (old.n - 1) * old.dt) {     // (after a gap the service starts afresh too)
+            for (let k = 1; k < old.n; k++) {
+                const ts = old.t0 + k * old.dt;
+                if (ts > f.t0) break;
+                if (ts > this.infLast) { this.inf.push({ ts, v: old.rep[k] }); this.infLast = ts; }
+            }
+        }
     }
 
     // ---------- layout ----------
@@ -143,6 +161,15 @@ class EcgMonitor {
             c.width = Math.round(this.W * dpr);
             c.height = Math.round(this.H * dpr);
             c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+        if (this.strip) {
+            const sb = this.strip.trace.parentElement.getBoundingClientRect();
+            this.SH = Math.max(0, sb.height);
+            for (const c of [this.strip.grid, this.strip.trace]) {
+                c.width = Math.round(this.W * dpr);
+                c.height = Math.round(Math.max(1, this.SH) * dpr);
+                c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+            }
         }
         // Pick a sweep length that keeps ~4-5 px per mm, like a real screen
         this.sweepSec = Math.min(10, Math.max(4, Math.round(this.W / (this.MM_PER_SEC * 4.5))));
@@ -169,6 +196,19 @@ class EcgMonitor {
         };
         lines(pxPerMm, this.theme.gridMinor, 1);        // 1 mm
         lines(pxPerMm * 5, this.theme.gridMajor, 1);    // 5 mm (0.2 s)
+        if (this.strip && this.SH > 1) {               // the strip: same paper, scaled to its height
+            const sg = this.strip.grid.getContext('2d'), k = this.SH / H, base = this.SH * 0.62;
+            sg.fillStyle = this.theme.background;
+            sg.fillRect(0, 0, W, this.SH);
+            for (const [step, color] of [[pxPerMm, this.theme.gridMinor], [pxPerMm * 5, this.theme.gridMajor]]) {
+                sg.strokeStyle = color;
+                sg.lineWidth = 1;
+                sg.beginPath();
+                for (let x = 0; x <= W; x += step) { sg.moveTo(Math.round(x) + 0.5, 0); sg.lineTo(Math.round(x) + 0.5, this.SH); }
+                for (let y = base % (step * k); y <= this.SH; y += step * k) { sg.moveTo(0, Math.round(y) + 0.5); sg.lineTo(W, Math.round(y) + 0.5); }
+                sg.stroke();
+            }
+        }
     }
 
     // ---------- signal processing ----------
@@ -275,48 +315,97 @@ class EcgMonitor {
         }
     }
 
-    // The forecast's part ahead of the pen, on the overlay canvas (redrawn every frame)
+    // The overlay (under the trace, redrawn every frame): the inference kept from earlier forecasts, solid
+    // behind the pen and dashed ahead of it, then the newest forecast's band and dashed line beyond that.
+    // The inference strip gets the inference alone, up to the pen.
     _drawForecast(playTs, mmPerMv) {
-        if (!this.overlay) return;
-        const ctx = this.overlay.getContext('2d');
-        ctx.clearRect(0, 0, this.W, this.H);
-        const f = this.fc;
-        if (!f || f.t0 + (f.n - 1) * f.dt <= playTs) return;
-        const limit = playTs + this.sweepMs * 0.85;          // never wrap round onto the pen
         const X = (ts) => ((ts % this.sweepMs) / this.sweepMs) * this.W;
         const Y = (v) => this.baseline - v * mmPerMv * this.pxPerMm;
-        // A wider erase bar while forecasting: the previous sweep goes from the pen to the forecast's end
-        // (the pen redraws that stretch within ~2 s), so the forecast isn't drawn over an old trace
-        const tc = this.trace.getContext('2d');
-        const xa = X(playTs) + 4, xb = X(Math.min(f.t0 + (f.n - 1) * f.dt, limit));   // +4: the pen tip's glow
-        if (xb >= xa) tc.clearRect(xa, 0, xb - xa, this.H);
-        else { tc.clearRect(xa, 0, this.W - xa, this.H); tc.clearRect(0, 0, xb, this.H); }
-        const runs = [];
-        let cur = [];
-        for (let k = 0; k < f.n; k++) {
-            const ts = f.t0 + k * f.dt;
-            if (ts <= playTs || ts >= limit) continue;
-            const x = X(ts);
-            if (cur.length && x < cur[cur.length - 1].x) { runs.push(cur); cur = []; }   // right-edge wrap
-            cur.push({ x, k });
+        const gapMs = this.sweepMs * this.GAP_FRAC;
+        const limit = playTs + this.sweepMs * 0.85;          // never wrap round onto the pen
+        while (this.inf.length && this.inf[0].ts < playTs - this.sweepMs - 2000) this.inf.shift();
+        const f = this.fc;
+        const fEnd = f ? Math.min(f.t0 + (f.n - 1) * f.dt, limit) : -Infinity;
+        const end = Math.max(playTs, fEnd, Math.min(this.infLast, limit));
+        const from = end - this.sweepMs + gapMs;             // one sweep back from the furthest point drawn
+
+        // runs of points that are contiguous on screen (break at the right-edge wrap and at gaps)
+        const runsOf = (pts, maxGap) => {
+            const runs = [];
+            let cur = [];
+            for (const p of pts) {
+                const prev = cur[cur.length - 1];
+                if (prev && (p.x < prev.x || p.ts - prev.ts > maxGap)) { runs.push(cur); cur = []; }
+                cur.push(p);
+            }
+            if (cur.length) runs.push(cur);
+            return runs.filter(r => r.length > 1);
+        };
+        const stroke = (ctx, runs, yOf, dash, width, color, alpha = 1) => {
+            ctx.save();
+            ctx.setLineDash(dash);
+            ctx.lineWidth = width;
+            ctx.strokeStyle = color;
+            ctx.globalAlpha = alpha;
+            ctx.lineJoin = 'round';
+            for (const run of runs) {
+                ctx.beginPath();
+                run.forEach((p, i) => (i ? ctx.lineTo(p.x, yOf(p.v)) : ctx.moveTo(p.x, yOf(p.v))));
+                ctx.stroke();
+            }
+            ctx.restore();
+        };
+        const dtMax = (f ? f.dt : 8) * 3;
+
+        if (this.overlay) {
+            const ctx = this.overlay.getContext('2d');
+            ctx.clearRect(0, 0, this.W, this.H);
+            if (f && fEnd > playTs) {
+                // a wider erase bar while forecasting: the old sweep from the pen to the forecast's end goes
+                // (the pen redraws that stretch within ~2 s), so the forecast isn't drawn over an old trace
+                const tc = this.trace.getContext('2d');
+                const xa = X(playTs) + 4, xb = X(fEnd);          // +4: the pen tip's glow
+                if (xb >= xa) tc.clearRect(xa, 0, xb - xa, this.H);
+                else { tc.clearRect(xa, 0, this.W - xa, this.H); tc.clearRect(0, 0, xb, this.H); }
+            }
+            const kept = this.inf.filter(p => p.ts >= from && p.ts <= limit).map(p => ({ ...p, x: X(p.ts) }));
+            stroke(ctx, runsOf(kept.filter(p => p.ts <= playTs), dtMax), Y, [], 1.5, this.theme.forecast, 0.8);
+            stroke(ctx, runsOf(kept.filter(p => p.ts >= playTs), dtMax), Y, [6, 5], 1.6, this.theme.forecast);
+            if (f) {
+                const ahead = [];
+                for (let k = 0; k < f.n; k++) {
+                    const ts = f.t0 + k * f.dt;
+                    if (ts < Math.max(playTs, this.infLast) || ts > limit) continue;
+                    ahead.push({ ts, k, x: X(ts), v: f.rep[k] });
+                }
+                for (const run of runsOf(ahead, dtMax)) {
+                    ctx.beginPath();
+                    run.forEach((p, i) => (i ? ctx.lineTo(p.x, Y(f.hi[p.k])) : ctx.moveTo(p.x, Y(f.hi[p.k]))));
+                    for (let i = run.length - 1; i >= 0; i--) ctx.lineTo(run[i].x, Y(f.lo[run[i].k]));
+                    ctx.closePath();
+                    ctx.fillStyle = this.theme.forecastBand;
+                    ctx.fill();
+                }
+                stroke(ctx, runsOf(ahead, dtMax), Y, [6, 5], 1.6, this.theme.forecast);
+            }
         }
-        if (cur.length) runs.push(cur);
-        ctx.save();
-        for (const run of runs) {
-            if (run.length < 2) continue;
-            ctx.beginPath();
-            run.forEach((p, i) => (i ? ctx.lineTo(p.x, Y(f.hi[p.k])) : ctx.moveTo(p.x, Y(f.hi[p.k]))));
-            for (let i = run.length - 1; i >= 0; i--) ctx.lineTo(run[i].x, Y(f.lo[run[i].k]));
-            ctx.closePath();
-            ctx.fillStyle = this.theme.forecastBand;
-            ctx.fill();
-            ctx.beginPath();
-            run.forEach((p, i) => (i ? ctx.lineTo(p.x, Y(f.rep[p.k])) : ctx.moveTo(p.x, Y(f.rep[p.k]))));
-            ctx.setLineDash([6, 5]);
-            ctx.lineWidth = 1.6;
-            ctx.strokeStyle = this.theme.forecast;
-            ctx.stroke();
+
+        if (this.strip && this.SH > 1) {
+            const sc = this.strip.trace.getContext('2d'), k = this.SH / this.H, base = this.SH * 0.62;
+            const SY = (v) => base - v * mmPerMv * this.pxPerMm * k;
+            sc.clearRect(0, 0, this.W, this.SH);
+            const lo = playTs - this.sweepMs + gapMs;
+            const pts = this.inf.filter(p => p.ts >= lo && p.ts <= playTs).map(p => ({ ...p, x: X(p.ts) }));
+            sc.save();
+            sc.shadowColor = this.theme.forecast;
+            sc.shadowBlur = 3;
+            stroke(sc, runsOf(pts, dtMax), SY, [], 1.8, this.theme.forecast);
+            sc.restore();
+            const xp = X(playTs);                            // the pen's position, as on the ECG above
+            sc.fillStyle = this.theme.forecast;
+            sc.globalAlpha = 0.35;
+            sc.fillRect(xp, 0, 1.5, this.SH);
+            sc.globalAlpha = 1;
         }
-        ctx.restore();
     }
 }

@@ -23,6 +23,7 @@
             </div>
             <div class="flex items-center gap-2">
                 <button id="debug-btn" class="px-3 py-1 rounded-full text-xs font-semibold border bg-slate-700/50 text-slate-300 border-slate-600 hover:bg-slate-700 hover:text-white transition-colors" title="Debug panel (D)">🐞 Debug</button>
+                <button id="disconnect-btn" class="hidden px-3 py-1 rounded-full text-xs font-semibold border bg-slate-700/50 text-slate-300 border-slate-600 hover:bg-red-500/20 hover:text-red-300 hover:border-red-500/40 transition-colors" title="End the session with this strap, then pick a device (this one or another)">⏏ Disconnect</button>
                 <span id="status" class="px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">
                     Awaiting Data...
                 </span>
@@ -98,12 +99,26 @@
                 </div>
             </div>
             <div class="flex flex-col sm:flex-row">
-                <div id="ecg-sweep" class="relative flex-grow h-56 sm:h-64">
-                    <canvas id="ecgGrid" class="absolute inset-0 w-full h-full"></canvas>
-                    <canvas id="ecgTrace" class="absolute inset-0 w-full h-full"></canvas>
-                    <canvas id="ecgForecast" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
-                    <div id="ecg-nosignal" class="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <span class="px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse">No Signal</span>
+                <div id="ecg-sweep" class="flex-grow flex flex-col min-w-0">
+                    <div class="relative h-56 sm:h-64">
+                        <canvas id="ecgGrid" class="absolute inset-0 w-full h-full"></canvas>
+                        <!-- the forecast sits under the live trace, so the pen draws the real ECG over it -->
+                        <canvas id="ecgForecast" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
+                        <canvas id="ecgTrace" class="absolute inset-0 w-full h-full"></canvas>
+                        <div id="ecg-nosignal" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <span class="px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse">No Signal</span>
+                        </div>
+                    </div>
+                    <!-- Inference strip: what the model forecast for each moment, under the real ECG at the same time -->
+                    <div id="ecg-inference" class="hidden border-t border-slate-700">
+                        <div class="flex items-center gap-3 px-4 pt-2 text-xs">
+                            <span class="font-medium text-violet-300 uppercase tracking-wider">🔮 Inference</span>
+                            <span class="text-slate-500">what the model forecast for each moment, lined up with the ECG above</span>
+                        </div>
+                        <div class="relative h-32 sm:h-40">
+                            <canvas id="infGrid" class="absolute inset-0 w-full h-full"></canvas>
+                            <canvas id="infTrace" class="absolute inset-0 w-full h-full"></canvas>
+                        </div>
                     </div>
                 </div>
                 <!-- Classic view: the original scrolling Chart.js line -->

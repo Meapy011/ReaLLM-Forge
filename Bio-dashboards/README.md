@@ -422,7 +422,7 @@ A patch never moves you to a new version, and each action needs a second tap to 
 Each patch lists its **patch notes** under its title (from the release's `PATCH_NOTES.md`, which the push script writes into the commit), so you can see what it changes before applying it.
 
 - **Needs a git clone**, not an unzipped copy: `git clone https://github.com/Meapy011/Bio-dash`
-  and run the dashboards from the newest release folder (`Bio-dash/V5.5_Dashboard`).
+  and run the dashboards from the newest release folder (`Bio-dash/V5.6_Dashboard`).
 - **Only fast-forwards from the clone's own remote.** It refuses if tracked files were edited
   locally or the branch has diverged, and says which files; nothing of yours is overwritten.
 - **Recordings and settings are safe.** Recordings live in `Documents/Bio-dash`; saved settings
@@ -698,6 +698,22 @@ running error beside the "repeat the last value" baseline. A research demo, not 
 - **Testing without the strap:** `polar_dashboard/replay_session.py` plays a recording back. It
   writes to a test folder (`BIODASH_DATA_DIR`), never into your recordings unless told to.
 - **Datasets:** `tools/export_waves.py` writes the same 125 Hz rows for ReaLLM-Forge.
+
+- **Prediction and reality together:** the forecast stays under the live ECG after the pen passes, and the
+  🔮 Inference strip under the monitor shows it alone, lined up with the ECG. The same values are logged to
+  `Documents/Bio-dash/Forecasts/<day>/<session time>_forecast_ecg.csv` (`t_ms`, `lead_ms`, the line drawn,
+  median, band; `BIODASH_FORECAST_LOG=0` turns it off).
+- **For other tools:** `GET /api/models` and `POST /api/forecast` (stream-lane-lab's API, ReaLLM-Forge
+  PR #924): send recent rows in mV on the 8 ms grid, get the next rows back. Details in `CHANGELOG.md`.
+- **Sharing it with the team:** `tailscale serve --bg --https=443 localhost:5001` (add `sudo` if it asks),
+  then send `https://<this computer>.<tailnet>.ts.net`; `tailscale serve reset` stops it. Only people on
+  your tailnet can open it. Visitors count as other devices; install the services without `--allow-power`
+  first if they shouldn't get the shutdown / reboot buttons.
+- **Changing straps:** ⏏ Disconnect (header, tap twice) ends the session and waits for you to pick a device.
+- **Is it working?** `tools/score_forecast.py` scores the model offline on your recordings against
+  repeating the last value, at 0.25 / 0.5 / 1 s ahead, as the dashboard runs it and with the ECG's
+  baseline offset removed. Run it with the forecast Python:
+  `~/.local/share/bio-dash/forecast-venv/bin/python tools/score_forecast.py <…/*_ecg.csv>`.
 
 Full details: `polar_dashboard/forecast/README.md`.
 
