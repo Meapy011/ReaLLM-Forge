@@ -159,7 +159,7 @@ async def _revalidate_pages(request, call_next):
     """The page and its scripts are checked with the server on every load (a quick 304 when unchanged), so a
     browser never keeps running the previous version's JavaScript after an update."""
     response = await call_next(request)
-    if request.url.path == "/" or request.url.path.startswith("/static/"):
+    if request.url.path in ("/", "/lab") or request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache"
     return response
 
@@ -338,6 +338,26 @@ async def forecast_api(request: Request):
         return JSONResponse({"detail": "bad JSON"}, status_code=422)
     code, out = await run_in_threadpool(_service_call, "/forecast", body)
     return JSONResponse(out, status_code=code)
+
+
+@app.get("/api/signal")
+async def forecast_signal(request: Request):
+    """PR #924's demo source (summed sine waves), for the /lab viewer."""
+    code, body = await run_in_threadpool(_service_call, "/signal?" + request.url.query, None, 10)
+    return JSONResponse(body, status_code=code)
+
+
+@app.get("/api/lab/rows")
+async def lab_rows(request: Request):
+    """The strap's newest rows on the model's 8 ms grid (mV / mg), for the /lab viewer's live source."""
+    code, body = await run_in_threadpool(_service_call, "/rows?" + request.url.query, None, 5)
+    return JSONResponse(body, status_code=code)
+
+
+@app.get("/lab")
+async def lab_page():
+    """ReaLLM-Forge PR #924's Stream Lane Lab viewer, with the live strap as a source."""
+    return FileResponse(os.path.join(WEB_DIR, "templates", "lab.html"))
 
 
 @app.post("/api/disconnect")

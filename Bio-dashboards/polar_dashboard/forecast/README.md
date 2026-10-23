@@ -1,4 +1,4 @@
-# Live forecasts in Polar-dash (Bio-dash V5.6)
+# Live forecasts in Polar-dash (Bio-dash V5.8)
 
 The **🔮 Forecast** pills on the ECG card and the accelerometer card show the next second, predicted
 by the H10 models, ahead of the live trace:

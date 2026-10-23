@@ -422,7 +422,7 @@ A patch never moves you to a new version, and each action needs a second tap to 
 Each patch lists its **patch notes** under its title (from the release's `PATCH_NOTES.md`, which the push script writes into the commit), so you can see what it changes before applying it.
 
 - **Needs a git clone**, not an unzipped copy: `git clone https://github.com/Meapy011/Bio-dash`
-  and run the dashboards from the newest release folder (`Bio-dash/V5.6_Dashboard`).
+  and run the dashboards from the newest release folder (`Bio-dash/V5.8_Dashboard`).
 - **Only fast-forwards from the clone's own remote.** It refuses if tracked files were edited
   locally or the branch has diverged, and says which files; nothing of yours is overwritten.
 - **Recordings and settings are safe.** Recordings live in `Documents/Bio-dash`; saved settings

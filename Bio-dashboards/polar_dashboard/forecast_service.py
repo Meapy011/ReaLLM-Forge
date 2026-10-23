@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live ECG / accelerometer forecasts for Polar-dash (Bio-dash V5.6).
+"""Live ECG / accelerometer forecasts for Polar-dash (Bio-dash V5.8).
 
 Runs next to app.py as its own process, so a crash or a GPU stall can't freeze the dashboard and torch
 stays out of the web server:
@@ -12,7 +12,8 @@ stays out of the web server:
   * every refresh (0.5 s) and for each overlay that is switched on, forecasts the next second as 8 samples
     with the fast loop (KV cache + CUDA graph) and POSTs the band, the median and one representative sample
     to app.py's /api/forecast/live, which broadcasts them to the browsers;
-  * answers stream-lane-lab's API (ReaLLM-Forge PR #924: GET /api/models, POST /api/forecast) on
+  * answers stream-lane-lab's API (ReaLLM-Forge PR #924: GET /api/models, POST /api/forecast, GET /api/signal,
+    plus GET /rows: the strap's latest rows for the /lab viewer) on
     127.0.0.1:5011, which app.py passes on;
   * sends a heartbeat once a second (state, device, timings) and gets the overlay switches back.
 
@@ -124,9 +125,68 @@ def to_real(lane, v):
     return v * float(lane.get("step", 1)) / float(lane.get("scale") or 1)
 
 
-def summarize(samples, lanes):
-    """samples: N x K x H integer values -> median, band (lo / hi) and the representative sample (the one
-    closest to the median; averaging samples would smear a heartbeat whose timing is uncertain)."""
+# ---- picking the line drawn by the heart's rhythm
+# The model tends to put the next R peak early (tools/forecast_timing.py: ~100 ms at 0.2-0.5 s ahead, Oct 22).
+# Of the samples it drew, the one whose next R peak falls where the recent beat-to-beat interval says it should
+# is drawn instead of the one closest to the median. BIODASH_FORECAST_REP=median goes back to the old choice.
+REP_PICK = os.environ.get("BIODASH_FORECAST_REP", "rhythm")
+R_HALF = 12               # rows each side of the moving mean taken off before looking for R peaks (~200 ms)
+R_REFRACTORY = 31         # rows (~250 ms): two R peaks are never closer
+
+
+def _highpass(x):
+    n, out = len(x), []
+    for i in range(n):
+        a, b = max(0, i - R_HALF), min(n, i + R_HALF + 1)
+        out.append(x[i] - sum(x[a:b]) / (b - a))
+    return out
+
+
+def _peaks(hp, thr, lo=1, hi=None):
+    """Indices of R peaks: local maxima above thr, the tallest first within R_REFRACTORY rows."""
+    hi = len(hp) - 1 if hi is None else hi
+    cand = sorted((i for i in range(max(1, lo), hi) if hp[i] > thr and hp[i] >= hp[i - 1] and hp[i] > hp[i + 1]),
+                  key=lambda i: -hp[i])
+    taken = []
+    for i in cand:
+        if all(abs(i - j) >= R_REFRACTORY for j in taken):
+            taken.append(i)
+    return sorted(taken)
+
+
+def rhythm_pick(ctx, samples):
+    """ctx: the context's ECG (one lane, oldest first, on the model's grid); samples: N lists of the forecast ECG
+    (the rows after ctx). -> the index of the sample whose first R peak lands nearest the next beat expected from
+    the context's own beat-to-beat intervals (median of the last three), or None when the context has fewer than
+    two clear R peaks."""
+    T = len(ctx)
+    hp = _highpass(ctx)
+    top = max(hp) if hp else 0
+    if top <= 0:
+        return None
+    pk = _peaks(hp, 0.5 * top, hi=T - 3)                 # a peak in the last rows may still be rising
+    if len(pk) < 2:
+        return None
+    rr = statistics.median([b - a for a, b in zip(pk, pk[1:])][-3:])
+    if not R_REFRACTORY <= rr <= 250:                     # 30-240 bpm on an 8 ms grid
+        return None
+    expect = max(1.0, pk[-1] + rr - (T - 1))              # rows after the last context row (overdue: next row)
+    thr = 0.5 * statistics.median(hp[i] for i in pk)
+    best = None
+    for n, s in enumerate(samples):
+        hs = _highpass(ctx[-R_HALF:] + list(s))[R_HALF:]
+        first = next((j + 1 for j in _peaks(hs, thr) if j + 1 > max(0, (pk[-1] + R_REFRACTORY) - (T - 1))), None)
+        when = first if first is not None else len(s) + rr / 2  # no beat in the horizon: later than its end
+        score = abs(when - expect)
+        if best is None or score < best[0]:
+            best = (score, n)
+    return best[1]
+
+
+def summarize(samples, lanes, prefer=None):
+    """samples: N x K x H integer values -> median, band (lo / hi) and the representative sample (`prefer` if
+    given, else the one closest to the median; averaging samples would smear a heartbeat whose timing is
+    uncertain)."""
     N, K, H = len(samples), len(samples[0]), len(samples[0][0])
     real = [[[to_real(lanes[k], samples[n][k][h]) for h in range(H)] for k in range(K)] for n in range(N)]
     med = [[statistics.median(real[n][k][h] for n in range(N)) for h in range(H)] for k in range(K)]
@@ -134,7 +194,7 @@ def summarize(samples, lanes):
     hi = [[max(real[n][k][h] for n in range(N)) for h in range(H)] for k in range(K)]
     spread = [sum(hi[k][h] - lo[k][h] for h in range(H)) / H + 1e-9 for k in range(K)]
     dist = [sum(sum(abs(real[n][k][h] - med[k][h]) for h in range(H)) / spread[k] for k in range(K)) for n in range(N)]
-    rep = min(range(N), key=dist.__getitem__)
+    rep = prefer if prefer is not None and 0 <= prefer < N else min(range(N), key=dist.__getitem__)
     dec = [3 if lane.get("unit") == "mV" else 1 for lane in lanes]
 
     def rnd(rows):
@@ -192,8 +252,19 @@ def start_api(svc, port):
             self.wfile.write(data)
 
         def do_GET(self):
-            if self.path.rstrip("/") == "/models":
-                return self._send(200, svc.api_models())
+            from urllib.parse import parse_qs, urlsplit
+            u = urlsplit(self.path)
+            q = {k: v[-1] for k, v in parse_qs(u.query).items()}
+            path = u.path.rstrip("/")
+            try:
+                if path == "/models":
+                    return self._send(200, svc.api_models())
+                if path == "/rows":
+                    return self._send(*svc.api_rows(q))
+                if path == "/signal":
+                    return self._send(*svc.api_signal(q))
+            except Exception as e:     # noqa: BLE001  (report, keep serving)
+                return self._send(500, {"detail": f"{type(e).__name__}: {e}"})
             self._send(404, {"detail": "not found"})
 
         def do_POST(self):
@@ -296,6 +367,8 @@ class Overlay:
         self.aligner = waves.LiveAligner(self.settings)
         self.ring = collections.deque(maxlen=self.block)
         self.times = collections.deque(maxlen=self.block)
+        self.lock = threading.Lock()     # ring + times, read by the API thread (/rows for the /lab viewer)
+        self.piece = 0                   # counts gaps / restarts, so a viewer knows its rows no longer join up
         self.last_t, self.fresh = None, 0
         self.prev = None                 # the last forecast, until the next one says how much of it to keep
         self.log = None                  # ForecastLog for the session being followed
@@ -309,8 +382,10 @@ class Overlay:
 
     def reset(self):
         self.aligner.reset()
-        self.ring.clear()
-        self.times.clear()
+        with self.lock:
+            self.ring.clear()
+            self.times.clear()
+            self.piece += 1
         self.last_t, self.fresh = None, 0
         self.prev = None
         if self.log:
@@ -319,14 +394,20 @@ class Overlay:
 
     def take_rows(self):
         for t, row, new_piece in self.aligner.rows():
-            if new_piece:
-                self.ring.clear()
-                self.times.clear()
-                self.prev = None             # a gap: the page starts afresh too
-            self.ring.append(row)
-            self.times.append(t)
+            with self.lock:
+                if new_piece:
+                    self.ring.clear()
+                    self.times.clear()
+                    self.piece += 1
+                    self.prev = None             # a gap: the page starts afresh too
+                self.ring.append(row)
+                self.times.append(t)
             self.last_t = t
             self.fresh += 1
+
+    def snapshot(self):
+        with self.lock:
+            return list(self.times), list(self.ring), self.piece
 
     def status(self, on):
         return {"on": on, "model": self.run, "loaded": self.model is not None,
@@ -389,6 +470,49 @@ class Service:
                         "context_length": ov.block, "interval_ms": ov.dt_ms, "max_horizon": API_MAX_HORIZON})
         return {"models": out, "device": self.device_name, "threads": self.torch.get_num_threads() if self.torch else 0,
                 "message": "" if out else "No forecast models are installed (polar_dashboard/forecast/models)."}
+
+    def api_rows(self, q):
+        """GET /rows?model_id=ecg&after=<t_ms>&piece=<n>: the strap's newest rows on the model's grid, in real
+        units (mV / mg), for the /lab viewer's live source. Rows after `after` (strap clock, ms); all of the
+        context ring when `after` is missing, older than the ring, or from another piece (a gap since)."""
+        ov = self.overlays.get(q.get("model_id", "ecg"))
+        if ov is None or ov.cfg_error:
+            return 404, {"detail": "Checkpoint not found; refresh the model list."}
+        times, rows, piece = ov.snapshot()
+        try:
+            after = float(q["after"]) if q.get("after") not in (None, "") else None
+            same = q.get("piece") not in (None, "") and int(q["piece"]) == piece
+        except ValueError:
+            return 422, {"detail": "after is a time in ms; piece an integer"}
+        restart = not (same and after is not None and times and times[0] <= after + ov.dt_ms / 2)
+        start = 0 if restart else next((i for i, t in enumerate(times) if t > after + 1e-6), len(times))
+        real = [[round(to_real(ln, r[k]), 4) for k, ln in enumerate(ov.lanes)] for r in rows[start:]]
+        return 200, {"model_id": q.get("model_id", "ecg"), "piece": piece, "restart": restart,
+                     "interval_ms": ov.dt_ms, "times": times[start:], "rows": real,
+                     "columns": [f"{ln['column'].rsplit('_', 1)[0]}_{ln.get('unit') or 'value'}" for ln in ov.lanes],
+                     "state": self.state, "detail": self.detail}
+
+    def api_signal(self, q):
+        """PR #924's GET /api/signal: its sine mixtures (lane_lab/data.py sine_series), the viewer's demo source."""
+        import numpy as np
+        try:
+            seed, frames = int(q.get("seed", 2026)), int(q.get("frames", 4096))
+            channels, start = int(q.get("channels", 1)), int(q.get("start", 0))
+        except ValueError:
+            return 422, {"detail": "seed, frames, channels and start are integers"}
+        if not (0 <= seed < 2 ** 31 and 1 <= frames <= 16384 and 1 <= channels <= 4 and 0 <= start <= 10 ** 9):
+            return 422, {"detail": "seed 0..2^31-1, frames 1..16384, channels 1..4, start 0..1e9"}
+        t = np.arange(start, start + frames, dtype=np.float64)
+        out = []
+        for c in range(channels):
+            rng = np.random.default_rng(np.random.SeedSequence([seed, c]))
+            amplitude = np.array([0.52, 0.29, 0.19]) * rng.uniform(0.85, 1.15, 3)
+            amplitude *= 0.90 / amplitude.sum()
+            phase = rng.uniform(-np.pi, np.pi, 3)
+            frequency = np.array([1 / 128, 1 / 47, 1 / 23]) * (1 + 0.07 * c)
+            out.append((amplitude[:, None] * np.sin(2 * np.pi * frequency[:, None] * t + phase[:, None])).sum(axis=0))
+        values = np.stack(out, axis=-1).astype(np.float32)
+        return 200, {"values": values.tolist(), "start": start, "channels": channels, "seed": seed}
 
     def api_forecast(self, req):
         """PR #924's POST /api/forecast for the H10 models: history rows in real units (mV / mg) on the
@@ -624,7 +748,11 @@ class Service:
         ov.compute_ms = (time.perf_counter() - t0) * 1000.0
         ov.count += 1
         ov.fresh = 0
-        out = summarize(vals, ov.lanes)
+        prefer = None
+        if REP_PICK == "rhythm" and ov.lanes[0]["column"].startswith("ecg"):
+            prefer = rhythm_pick([r[0] for r in ov.ring], [v[0] for v in vals])   # all 2 s: more beats than the context
+        out = summarize(vals, ov.lanes, prefer)
+        out["rep_pick"] = "rhythm" if prefer is not None else "median"
         t0_new = times[-1] + ov.dt_ms
         self.keep(ov, t0_new)
         ov.prev = {"t0": t0_new, "dt": ov.dt_ms, "from": times[-1], **{k: out[k] for k in ("rep", "median", "lo", "hi")}}

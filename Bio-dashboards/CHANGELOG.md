@@ -1,5 +1,30 @@
 # Changelog
 
+## V5.8
+
+V5.6 plus a second page for the forecast models: the Stream Lane Lab viewer from ReaLLM-Forge PR #924,
+on the live strap.
+
+- **🧪 Lab** (`/lab`, the button next to Forecast): ReaLLM-Forge PR #924's Stream Lane Lab viewer, served
+  by Polar-dash, with the live strap as a source beside PR #924's sine demo. Pick a model (`ecg`, or `acc`
+  with its 4 columns), the horizon (up to 128 rows, 1 s), the decoding (mean, greedy, sample with
+  temperature and top-k), press Start: it forecasts from the newest rows as soon as the last forecast is
+  back, and the real signal then arrives over it, with the one-step and rollout error, latency and frames
+  per second. It runs on the same forecast service as the Heart page (one at a time on the GPU), through
+  `GET /api/lab/rows` (the strap's newest rows on the 8 ms grid, in mV / mg) and PR #924's `GET /api/signal`.
+  Pausing, or leaving the tab, stops its forecasts. `test_lab.py` (19 checks, no PyTorch needed).
+- `tools/forecast_timing.py`: finds the R peaks in a recording and in its forecast log (`Forecasts/`) and
+  reports the forecast's timing error by how far ahead it was made (0-100 ms, 100-200 ms, ...), for the
+  line drawn and the median. The same offset even at 0-100 ms ahead means an alignment problem; an error
+  that grows with the lead is the model's beat timing. Standard library only; `test_forecast_timing.py`.
+- **The line drawn follows your rhythm.** The model tends to put the next R peak early (about 100 ms at
+  0.2-0.5 s ahead, measured with `tools/forecast_timing.py` on Oct 22; at 0-100 ms ahead it's within 1 ms,
+  so nothing is misaligned). Of the 8 samples it draws, the dashboard now shows the one whose next R peak
+  lands where the last 2 s of beats put it (the median of the last beat-to-beat intervals), instead of the
+  one closest to the median. The median and band are unchanged, and so is the error readout (it uses the
+  median). Falls back to the old choice when the last 2 s hold fewer than two clear beats.
+  `BIODASH_FORECAST_REP=median` turns it off. `test_rhythm_pick.py` (9 checks).
+
 ## V5.6
 
 V5.5 plus a better look at the live ECG forecast, and changing straps without restarting:
