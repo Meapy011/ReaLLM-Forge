@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Creates an isolated Python environment for Bio-dash in .venv/
 #
-#   ./setup_env.sh                    all six dashboards
+#   ./setup_env.sh                    all seven dashboards
 #   ./setup_env.sh polar_dashboard    just one dashboard's requirements
 #   ./setup_env.sh --fresh            delete .venv and rebuild from scratch
 #
@@ -35,7 +35,7 @@ echo "🔎 Checking imports..."
 "$VENV/bin/python" - << 'PY'
 import importlib.util
 from importlib.metadata import version, PackageNotFoundError
-for mod, dist in [("bleak", "bleak"), ("polar_python", "polar-python"),
+for mod, dist in [("bleak", "bleak"), ("polar_python", "polar-python"), ("numpy", "numpy"),
                   ("fastapi", "fastapi"), ("uvicorn", "uvicorn"), ("flask", "Flask")]:
     if importlib.util.find_spec(mod) is None:
         print(f"  ·  {dist:13s} (not in this requirements set)")

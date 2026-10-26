@@ -30,6 +30,7 @@ LEAD_BINS = [(0, 100), (100, 200), (200, 300), (300, 400), (400, 500), (500, 10 
 MATCH_MS = 350          # a forecast peak further than this from every real one is a miss (half a beat at ~85 bpm)
 REFRACTORY_MS = 250     # two R peaks are never closer than this
 BASELINE_MS = 200       # the moving mean taken off before looking for peaks
+MIN_SHORT = 20          # forecast peaks made 0-100 ms ahead needed for a verdict (~5 min of forecasting)
 GAP_MS = 60             # a longer gap between rows splits the series (no peaks found across it)
 
 
@@ -165,11 +166,12 @@ def summary(pairs):
 def verdict(rows):
     """(kind, text). The shortest leads decide whether there's a constant offset: a beat forecast only 0-100 ms
     ahead is nearly in the context already, so the model can't be far off -- a clock or drawing offset would be."""
-    short = next((r for r in rows[:2] if r[3] is not None), None)
+    short = rows[0] if rows[0][2] >= MIN_SHORT and rows[0][3] is not None else None
     longer = [r for r in rows[2:5] if r[3] is not None]
     if not short:
-        return "unknown", ("Not enough forecast peaks made under 200 ms ahead to tell. Record a few minutes with "
-                           "the forecast on, then run this again.")
+        return "unknown", (f"Only {rows[0][2]} forecast peaks made 0-100 ms ahead (needs {MIN_SHORT}): too few to tell "
+                           "an offset from the model's timing (further ahead the model's own error dominates). "
+                           "Leave the forecast on for 5 minutes or more, then run this again.")
     s_med, s_spread, s_lead = short[3], short[5] - short[4], f"{short[0]}-{short[1]} ms"
     l_spread = statistics.median([r[5] - r[4] for r in longer]) if longer else None
     if abs(s_med) > 24:

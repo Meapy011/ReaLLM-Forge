@@ -31,9 +31,9 @@ def beat(t, peaks):
     return v
 
 
-def make(root, stamp, offset_of_lead, seed):
+def make(root, stamp, offset_of_lead, seed, dur=240_000.0):
     rnd = random.Random(seed)
-    t0, dur = 1_700_000_000_000.0, 240_000.0
+    t0 = 1_700_000_000_000.0
     peaks, p = [], t0 + 300
     while p < t0 + dur:
         peaks.append(p)
@@ -78,6 +78,10 @@ check("error growing with the lead, early on average -> the model's timing (exit
 
 r = run(make(tempfile.mkdtemp(), "12-00-00", lambda lead, rnd: 0.0, 3))
 check("a perfect forecast -> aligned (exit 0)", r.returncode == 0 and "aligned" in r.stdout, r.stdout + r.stderr)
+
+r = run(make(tempfile.mkdtemp(), "13-00-00", lambda lead, rnd: -0.15 * max(0, lead), 4, dur=20_000.0))
+check("20 s of forecasting -> 'not enough data', never an alignment verdict from the model's own bias",
+      r.returncode == 0 and "not enough data" in r.stdout and "alignment problem" not in r.stdout, r.stdout)
 
 r = run(tempfile.mkdtemp())
 check("no forecast log -> a clear message", r.returncode != 0 and "No forecast log" in (r.stdout + r.stderr))

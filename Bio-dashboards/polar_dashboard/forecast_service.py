@@ -207,7 +207,7 @@ def has_weights(d):
 
 
 def weights_elsewhere(model_dir, cfg):
-    """The weights stay out of git, so a new release folder starts without them: use the same model's (an
+    """Before V6.0 the weights stayed out of git, so a release folder could start without them: use the same model's (an
     identical config.json) from another release folder next to this one (<Bio-dash>/V*_Dashboard/...),
     newest first. tools/orin_setup.sh --models copies them in for good."""
     rel = os.path.relpath(os.path.abspath(model_dir), os.path.dirname(HERE))    # within the release folder
@@ -703,6 +703,10 @@ class Service:
             log(f"{ov.kind}: loaded {ov.run} on {self.dev} in {time.time() - t0:.1f} s")
         except Exception as e:     # noqa: BLE001
             ov.load_error = f"couldn't load {ov.run}: {type(e).__name__}: {e}"
+            if "PreTrainedModel" in str(e) or isinstance(e, ImportError):
+                # transformers hides the real import error; say how to see it, and the usual fix
+                ov.load_error += (f" | the real error: {sys.executable} -c 'from transformers.modeling_utils import PreTrainedModel'"
+                                  " | usually fixed by: tools/orin_setup.sh (V6.2+), or: pip install 'transformers>=4.40,<5' 'pillow>=9.1'")
             log(ov.load_error)
         return ov.model is not None
 

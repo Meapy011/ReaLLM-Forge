@@ -34,12 +34,13 @@ DASHBOARDS = [   # (key, label, folder, port)
     ("omni",   "Omni (Polar + O2 together)", "Omni-dashboard", 5000),
     ("hydro",  "Hydro-dash (HidrateSpark)",  "hydro_dashboard",  5004),
     ("analysis", "Analysis (reads recordings, no Bluetooth)", "analysis_dashboard", 5005),
+    ("muse",   "Muse S Athena (EEG, fNIRS, pulse)", "muse_dashboard", 5006),
 ]
 KEYS = [d[0] for d in DASHBOARDS]
 INFO = {d[0]: d for d in DASHBOARDS}
 # Omni drives the Polar and the O2 itself: running it alongside the standalone
 # Polar / Viatom dashboards would have two programs fighting over the same devices.
-CONFLICTS = {"omni": {"polar", "viatom"}, "polar": {"omni"}, "viatom": {"omni"}, "atmos": set(), "hydro": set(), "analysis": set()}
+CONFLICTS = {"omni": {"polar", "viatom"}, "polar": {"omni"}, "viatom": {"omni"}, "atmos": set(), "hydro": set(), "analysis": set(), "muse": set()}
 
 DEFAULT_OPTS = {"keep_awake": True, "lid": False, "reconnect": True, "allow_power": False}
 

@@ -10,6 +10,7 @@ Live browser dashboards for BLE biometric and environmental sensors, built for L
 | `Omni-dashboard/` | Polar H10 + Viatom O2 at the same time | Both of the above in one view, each on its own radio when two are available | 5000 | `./run_dashboard.sh` |
 | `hydro_dashboard/` | **HidrateSpark** smart bottle (PRO / PRO 2) | Sips with timestamps, intake vs. goal, fill level, refills, battery | 5004 | `./run_dashboard.sh` |
 | `analysis_dashboard/` | *No device:* reads what the others recorded | Summaries per day or range, every signal on one clock, CSV export, overnight reports | 5005 | `./run_dashboard.sh` |
+| `muse_dashboard/` | **Muse S Athena** headband (new in V6.0) | EEG 8 ch at 256 Hz with band powers and contact, fNIRS (blood oxygenation, both sides), heart rate from the forehead PPG, head motion, battery | 5006 | `./run_dashboard.sh` |
 
 ![Polar H10 dashboard with bedside-monitor ECG](docs/polar_dashboard.png)
 
@@ -26,7 +27,7 @@ Live browser dashboards for BLE biometric and environmental sensors, built for L
 The easiest setup is an isolated virtual environment, which keeps these packages separate from anything else installed on the machine:
 
 ```bash
-./setup_env.sh                     # creates .venv/ with all six dashboards' packages
+./setup_env.sh                     # creates .venv/ with all seven dashboards' packages
 ./setup_env.sh polar_dashboard     # or just one dashboard
 ./setup_env.sh --fresh             # wipe and rebuild
 ```
@@ -45,7 +46,7 @@ Or install system-wide instead: `pip3 install -r requirements.txt`.
 polar_dashboard/run_dashboard.sh    # or one dashboard on its own
 ```
 
-Every dashboard has its own port (**Omni 5000 · Polar 5001 · Atmos 5002 · Viatom 5003 · Hydro 5004 · Analysis 5005**), and the sidebar links to the others that are running (a dashboard that isn't running isn't listed; it appears within about 10 seconds of starting).
+Every dashboard has its own port (**Omni 5000 · Polar 5001 · Atmos 5002 · Viatom 5003 · Hydro 5004 · Analysis 5005 · Muse 5006**), and the sidebar links to the others that are running (a dashboard that isn't running isn't listed; it appears within about 10 seconds of starting).
 
 1. Wake the device. The H10 needs wet electrodes. The O2 Ultra only advertises while it's powered on and measuring.
 2. Pick it from the scanner panel and click **Connect**.
@@ -233,6 +234,42 @@ sensor, refills and battery, with hour and 7-day charts and day-scale tile trend
   Details: `hydro_dashboard/README.md`, `hydro_dashboard/PROTOCOL.md` and
   `hydro_dashboard/TROUBLESHOOTING.md`.
 
+### Muse-dash (Muse S Athena)
+
+> 🧪 **New in V6.0, not yet tried on a real headband.** The protocol comes from
+> [OpenMuse](https://github.com/DominiqueMakowski/OpenMuse) (validated there on real recordings), and the
+> decoder here matches OpenMuse's on its test packets, but the dashboard itself has so far only run
+> against the stand-in headband (`MUSE_FAKE=1`). Feedback from the first real sessions will tune it.
+
+![Muse-dash with the stand-in headband](docs/muse_dashboard.png)
+
+- **The Brain page,** in the V6 design (the redesign's colours, cards and charts, in every theme).
+- **EEG:** the four head sensors (TP9, AF7, AF8, TP10; **+ AUX** adds the 4 extra channels) as live
+  traces, filtered 1-40 Hz with a 60 Hz notch for display (50 Hz or off with a tap; the recording is raw).
+- **Brain waves:** delta / theta / alpha / beta / gamma as a share of the power, every second from the
+  last 2 s, averaged over the sensors in contact, now and over the last 2 minutes. **Alpha share** is a
+  tile with a trend.
+- **Sensor contact:** one dot per sensor (good / fair / bad / off), from how much each signal swings or
+  sits stuck at the end of its range. Wet the sensors or move hair when one isn't green.
+- **fNIRS:** oxy- and deoxy-haemoglobin change on each side of the forehead (730 + 850 nm, modified
+  Beer-Lambert), against a 10 s baseline; **⟲ Zero** takes a new one. The path length is assumed, so
+  the direction and shape are what to read, not the µM.
+- **Heart rate from the forehead PPG:** the optical channel with the clearest pulse is picked every
+  second; beats, heart rate and RMSSD, plus the pulse waveform.
+- **Head motion and position:** accelerometer chart, tilt forward / back and left / right, turning,
+  still or moving. **Battery** from the headband.
+- **Presets** (debug panel): what the headband sends. Default `p1041`, everything: EEG 8 ch, optics
+  16 ch (all wavelengths, both sides), motion, battery. `p21` is EEG and motion only (no light on the
+  forehead). Changing it starts a new session, since the files' columns change.
+- **Recordings:** `Muse/<headband>/<date>/<time>_` `eeg` (µV, 256 Hz), `optics` (64 Hz), `imu` (g, °/s,
+  52 Hz), `bands` (log10 µV² per sensor and band, and contact, 1 / s), `heart` (per beat), `fnirs` (1 / s)
+  and `battery`. Times come from the headband's own clock, mapped to the computer's as with the H10.
+- **One connection at a time:** close the Muse phone app. The radio: "auto" uses the built-in one when
+  there are two, leaving a dongle to the H10.
+- **Without the headband:** `MUSE_FAKE=1 muse_dashboard/run_dashboard.sh` runs everything against a
+  stand-in that sends packets in the real format (alpha, beta, blinks, a 66 bpm pulse, a slow
+  oxygenation swing). Details: `muse_dashboard/README.md` and `muse_dashboard/PROTOCOL.md`.
+
 ### Analysis (all devices, from the recordings)
 
 ![Analysis dashboard](docs/analysis_dashboard.png)
@@ -328,8 +365,10 @@ Every dashboard saves its data to your **Documents** folder, organised by dashbo
 ├── Omni/
 │   ├── Polar H10 D793BB2E/2026-09-30/   _ecg · _acc · _rr · _hrv (HR, RMSSD, SDNN at 1 Hz)
 │   └── Band-WU 0347/2026-09-30/         _vitals (SpO₂, HR at 1 Hz)
-└── HidrateSpark/
-    └── h2o 3F2A/2026-09-30/             _sips · _status · _events · _raw (every notification)
+├── HidrateSpark/
+│   └── h2o 3F2A/2026-09-30/             _sips · _status · _events · _raw (every notification)
+└── Muse/
+    └── MuseS-1A2B/2026-09-30/           _eeg · _optics · _imu · _bands · _heart · _fnirs · _battery
 ```
 
 - **One set of files per session.** Files open when a device connects and close when it disconnects, so every file belongs to exactly one sensor. The file name is the time the session started.
@@ -486,6 +525,10 @@ The scanner panel shows what it's waiting for, with **Pause** / **Resume** and *
   [loryanstrant/HidrateSpark-MQTT-bridge](https://github.com/loryanstrant/HidrateSpark-MQTT-bridge),
   [bditter/HA-Hidratespark](https://github.com/bditter/HA-Hidratespark) and
   [maxperron/HydroSync](https://github.com/maxperron/HydroSync) — see `hydro_dashboard/PROTOCOL.md`.
+- Muse S Athena protocol from **[DominiqueMakowski/OpenMuse](https://github.com/DominiqueMakowski/OpenMuse)**
+  (MIT), which credits [amused-py](https://github.com/Amused-EEG/amused-py) (MIT) for working out the
+  communication and [AbosaSzakal's MuseAthenaDataformatParser](https://github.com/AbosaSzakal/MuseAthenaDataformatParser) for the data format — see
+  `muse_dashboard/PROTOCOL.md`.
 
 ## Changelog
 
@@ -691,9 +734,9 @@ The **🔮 Forecast** pills on Polar-dash's ECG and accelerometer cards show the
 by the H10 models: a band (8 sampled futures) and a dashed line ahead of the live trace, with the
 running error beside the "repeat the last value" baseline. A research demo, not a medical device.
 
-- **Needs the models and PyTorch.** Copy `polar_dashboard/forecast/models/{ecg,ecg_acc}` from the
-  shared zip (the weights stay out of git), and install torch in Polar's `.venv`. Without them the
-  pills say so and the dashboard runs as before. On a Jetson Orin, `tools/orin_setup.sh` does it.
+- **Needs PyTorch.** The models are included from V6.0 (`polar_dashboard/forecast/models/{ecg,ecg_acc}`,
+  49 + 69 MB); PyTorch is not. On a Jetson Orin, `tools/orin_setup.sh` sets it up (it reuses a system-wide
+  Jetson PyTorch when there is one). Without it the pills say so and the dashboard runs as before.
 - **`forecast_service.py`** runs beside `app.py` (`run_dashboard.sh` starts it); `--bench` times it.
 - **Testing without the strap:** `polar_dashboard/replay_session.py` plays a recording back. It
   writes to a test folder (`BIODASH_DATA_DIR`), never into your recordings unless told to.

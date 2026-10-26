@@ -118,9 +118,16 @@ else
     "$VPY" -m pip install -q "$TORCH_SPEC" --index-url https://download.pytorch.org/whl/cpu 2>/dev/null || \
         "$VPY" -m pip install -q "$TORCH_SPEC"
 fi
-say "transformers, safetensors"
-# transformers 4.40+ and 5.x both load these models (the tied-head fix is in the model code)
-"$VPY" -m pip install -q "transformers>=4.40,<6" safetensors
+say "transformers 4.x, safetensors, Pillow"
+# transformers 4.x, as the models were tested (4.53.3). 5.x needs PyTorch 2.6+ and isn't what they were tested
+# with. Pillow 9.1+ in the environment itself: with the system's PyTorch the environment also sees the system's
+# packages, and JetPack 6's (Ubuntu 22.04's) Pillow 9.0 lacks Image.Resampling, which transformers imports, so
+# every model load failed ("Could not import module 'PreTrainedModel'"). An environment made earlier with 5.x
+# is moved back to 4.x by this line.
+"$VPY" -m pip install -q "transformers>=4.40,<5" safetensors "pillow>=9.1"
+say "Checking transformers"
+"$VPY" -c 'import transformers; from transformers.modeling_utils import PreTrainedModel; print("transformers", transformers.__version__, "OK")' || \
+    die "transformers doesn't import (above). Paste the error into an issue; the forecasts can't load a model until it does."
 
 say "Checking PyTorch"
 torch_check() {
